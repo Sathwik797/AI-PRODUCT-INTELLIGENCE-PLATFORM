@@ -34,3 +34,6 @@ dist/
 
 # Temporary files
 *.tmp
+
+# Ignore uploads test files
+uploads/
