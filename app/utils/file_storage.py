@@ -5,9 +5,20 @@ from PIL import Image
 import mimetypes
 
 from fastapi import UploadFile
+from PIL import Image, UnidentifiedImageError
 
 
 class FileStorageService:
+    
+    SUPPORTED_IMAGE_EXTENSIONS = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+        ".avif"
+    }
+
+    MAX_FILE_SIZE = 5 * 1024 * 1024
 
     UPLOAD_DIR = Path("uploads/products")
 
@@ -104,3 +115,72 @@ class FileStorageService:
             "mime_type": mime_type or "application/octet-stream",
             "file_size": file_path.stat().st_size
         }
+        
+    def validate_file(
+        self,
+        file: UploadFile
+    ) -> None:
+
+        self.validate_extension(file)
+
+        self.validate_file_size(file)
+
+        self.validate_image(file)
+    
+    def validate_extension(
+        self,
+        file: UploadFile
+    ) -> None:
+
+        if not file.filename:
+            raise ValueError(
+                "Filename is missing."
+            )
+
+        extension = (
+            Path(file.filename)
+            .suffix
+            .lower()
+        )
+
+        if extension not in self.SUPPORTED_IMAGE_EXTENSIONS:
+            raise ValueError(
+                "Only JPG, JPEG, PNG, WEBP, and AVIF images are allowed."
+            )
+    
+    def validate_file_size(
+        self,
+        file: UploadFile
+    ) -> None:
+
+        file.file.seek(0, 2)
+
+        size = file.file.tell()
+
+        file.file.seek(0)
+
+        if size > self.MAX_FILE_SIZE:
+
+            raise ValueError(
+                "Maximum file size is 5 MB."
+            )
+    
+    def validate_image(
+        self,
+        file: UploadFile
+    ) -> None:
+
+        try:
+
+            image = Image.open(file.file)
+
+            image.verify()
+
+            file.file.seek(0)
+
+        except UnidentifiedImageError:
+
+            raise ValueError(
+                "Uploaded file is not a valid image."
+            )
+    

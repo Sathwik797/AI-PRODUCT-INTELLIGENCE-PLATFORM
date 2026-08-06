@@ -30,3 +30,7 @@ class ImageResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True
     )
+
+class ImageDisplayOrderUpdate(BaseModel):
+
+    display_order: int
