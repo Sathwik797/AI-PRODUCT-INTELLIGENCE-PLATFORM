@@ -123,12 +123,12 @@ RAG Pipeline
 
 - MySQL
 
-## AI & Machine Learning (Upcoming)
+## AI & Machine Learning
 
-- Google Gemini Vision
-- Sentence Transformers
-- FAISS
-- NumPy
+- Google Gemini Vision (`google-genai` SDK - Integrated)
+- Embedding Models (Upcoming)
+- FAISS Vector Database (Upcoming)
+- NumPy (Upcoming)
 
 ## Tools
 
@@ -145,6 +145,7 @@ RAG Pipeline
 AI-PRODUCT-INTELLIGENCE-PLATFORM/
 
 ├── app/
+│   ├── ai/
 │   ├── api/
 │   ├── core/
 │   ├── db/
@@ -172,9 +173,9 @@ AI-PRODUCT-INTELLIGENCE-PLATFORM/
 | Project Setup | ✅ Completed |
 | Category Module | ✅ Completed |
 | Product Module | ✅ Completed |
-| Image Management | ⏳ Planned |
-| Gemini Vision Integration | ⏳ Planned |
-| Embedding Generation | ⏳ Planned |
+| Image Management | ✅ Completed |
+| Gemini Vision Integration (Phase 05) | ✅ Completed |
+| Embedding Generation | ⏳ Next Phase |
 | Vector Database (FAISS) | ⏳ Planned |
 | Semantic Search | ⏳ Planned |
 | RAG Pipeline | ⏳ Planned |
@@ -237,18 +238,16 @@ http://127.0.0.1:8000/docs
 
 # 📚 Documentation
 
-Detailed implementation notes are maintained phase by phase.
+Detailed implementation notes are maintained phase by phase:
 
 ```
 docs/
-
-phases/
-
-Phase-01-Project-Setup.md
-
-Phase-02-Category-Module.md
-
-Phase-03-Product-Module.md
+└── phases/
+    ├── Phase-01-Project-Setup.md
+    ├── Phase-02-Category-Module.md
+    ├── Phase-03-Product-Module.md
+    ├── Phase-04-Image-Module.md
+    └── Phase-05-AI-Product-Metadata.md
 ```
 
 ---
@@ -278,8 +277,8 @@ This project is being developed to gain practical experience with:
 - ✅ Phase 01 — Project Setup
 - ✅ Phase 02 — Category Module
 - ✅ Phase 03 — Product Module
-- ⏳ Phase 04 — Image Management
-- ⏳ Phase 05 — Gemini Vision Integration
+- ✅ Phase 04 — Image Management
+- ✅ Phase 05 — Gemini Vision Integration (Steps 1–7)
 - ⏳ Phase 06 — Embedding Generation
 - ⏳ Phase 07 — Semantic Search with FAISS
 - ⏳ Phase 08 — Retrieval-Augmented Generation (RAG)
