@@ -110,7 +110,7 @@ class AIGenerationService:
         )
 
         # 3. Create initial generation record with status='pending'
-        model_name = getattr(self.provider.config, "model_name", "gemini-2.5-flash")
+        model_name = getattr(self.provider.config, "model_name", "gemini-3.1-flash-lite")
         generation = AIGeneration(
             product_id=product_id,
             generation_number=generation_number,

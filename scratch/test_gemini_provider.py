@@ -8,12 +8,19 @@ import app.ai.gemini_provider as gp
 from app.ai.gemini_provider import (
     AIImageInput,
     AIProductContext,
+    AttributeItemWire,
+    CategoryFieldWire,
+    CategoryValueWire,
+    EvidenceSourceWire,
+    EvidenceWire,
     GeminiAPIError,
     GeminiConfig,
     GeminiConfigurationError,
+    GeminiProductMetadataWire,
     GeminiProvider,
     GeminiProviderError,
     GeminiResponseValidationError,
+    TextFieldWire,
 )
 from app.schemas.ai_metadata import AIProductMetadata
 
@@ -267,6 +274,273 @@ def test_7_no_sqlalchemy_dependency():
     assert res.title.value == "Nike Pegasus 40 Men's Road Running Shoes"
 
 run_test("7. No SQLAlchemy Product object is required by the provider", test_7_no_sqlalchemy_dependency)
+
+# Sample valid payload matching GeminiProductMetadataWire contract
+VALID_WIRE_PAYLOAD = {
+    "title": {
+        "type": "text",
+        "value": "Nike Pegasus 40 Men's Road Running Shoes",
+        "confidence": 0.96,
+        "evidence": {
+            "source": {"type": "image", "image_id": 1},
+            "explanation": "Visible on lateral side"
+        }
+    },
+    "description": {
+        "type": "text",
+        "value": "Responsive road running shoes for daily training.",
+        "confidence": 0.90,
+        "evidence": {
+            "source": {"type": "seller"},
+            "explanation": "From seller catalog"
+        }
+    },
+    "brand": {
+        "type": "text",
+        "value": "Nike",
+        "confidence": 0.99,
+        "evidence": {
+            "source": {"type": "image", "image_id": 1},
+            "explanation": "Swoosh logo visible"
+        }
+    },
+    "category": {
+        "value": {
+            "recommended_category_id": 1,
+            "recommended_category_name": "Footwear",
+            "proposed_category": "Running Shoes"
+        },
+        "confidence": 0.95,
+        "evidence": {
+            "source": {"type": "image", "image_id": 1},
+            "explanation": "Running shoe sole pattern"
+        }
+    },
+    "tags": ["running", "footwear"],
+    "keywords": ["nike pegasus", "mens runner"],
+    "attributes": [
+        {
+            "name": "color",
+            "type": "text",
+            "value": "Black / White",
+            "confidence": 0.95,
+            "evidence": {
+                "source": {"type": "image", "image_id": 2},
+                "explanation": "Upper color pattern"
+            }
+        },
+        {
+            "name": "weight",
+            "type": "measurement",
+            "value": 280,
+            "unit": "g",
+            "confidence": 0.92,
+            "evidence": {
+                "source": {"type": "seller"},
+                "explanation": "Spec sheet weight"
+            }
+        },
+        {
+            "name": "eco_friendly",
+            "type": "boolean",
+            "value": True,
+            "confidence": 0.85,
+            "evidence": {
+                "source": {"type": "inferred"},
+                "explanation": "Recycled materials claim"
+            }
+        }
+    ]
+}
+
+# Test A: GeminiProductMetadataWire converts successfully through Google GenAI schema transformer
+def test_a_schema_transformer():
+    from google.genai._transformers import t_schema
+    s = t_schema(None, GeminiProductMetadataWire)
+    assert s is not None
+    assert str(s.type).upper() == "TYPE.OBJECT"
+
+run_test("A. GeminiProductMetadataWire converts successfully through schema transformer", test_a_schema_transformer)
+
+# Test B: A valid wire response converts to AIProductMetadata
+def test_b_valid_wire_converts():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert isinstance(res, AIProductMetadata)
+    assert res.title.value == "Nike Pegasus 40 Men's Road Running Shoes"
+
+run_test("B. A valid wire response converts to AIProductMetadata", test_b_valid_wire_converts)
+
+# Test C: Attribute list converts correctly into domain attribute dictionary
+def test_c_attribute_list_to_dict():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert isinstance(res.attributes, dict)
+    assert "color" in res.attributes
+    assert "weight" in res.attributes
+    assert "eco_friendly" in res.attributes
+
+run_test("C. Attribute list converts correctly into domain attribute dictionary", test_c_attribute_list_to_dict)
+
+# Test D: Multiple attributes preserve their names
+def test_d_multiple_attribute_names():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert set(res.attributes.keys()) == {"color", "weight", "eco_friendly"}
+
+run_test("D. Multiple attributes preserve their names", test_d_multiple_attribute_names)
+
+# Test E: Confidence is preserved exactly
+def test_e_confidence_preserved():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert res.title.confidence == 0.96
+    assert res.brand.confidence == 0.99
+    assert res.attributes["color"].confidence == 0.95
+    assert res.attributes["weight"].confidence == 0.92
+
+run_test("E. Confidence is preserved exactly", test_e_confidence_preserved)
+
+# Test F: Evidence is preserved exactly
+def test_f_evidence_preserved():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert res.title.evidence.explanation == "Visible on lateral side"
+    assert res.attributes["weight"].evidence.explanation == "Spec sheet weight"
+
+run_test("F. Evidence is preserved exactly", test_f_evidence_preserved)
+
+# Test G: Image evidence preserves image_id
+def test_g_image_evidence_id():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert res.title.evidence.source.type == "image"
+    assert res.title.evidence.source.image_id == 1
+    assert res.attributes["color"].evidence.source.type == "image"
+    assert res.attributes["color"].evidence.source.image_id == 2
+
+run_test("G. Image evidence preserves image_id", test_g_image_evidence_id)
+
+# Test H: Seller evidence remains seller evidence
+def test_h_seller_evidence():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert res.description.evidence.source.type == "seller"
+    assert res.attributes["weight"].evidence.source.type == "seller"
+
+run_test("H. Seller evidence remains seller evidence", test_h_seller_evidence)
+
+# Test I: Inferred evidence remains inferred evidence
+def test_i_inferred_evidence():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_WIRE_PAYLOAD)
+    assert res.attributes["eco_friendly"].evidence.source.type == "inferred"
+
+run_test("I. Inferred evidence remains inferred evidence", test_i_inferred_evidence)
+
+# Test J: Unsupported attribute type fails strict domain validation
+def test_j_unsupported_attribute_type_fails():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    bad_payload = dict(VALID_WIRE_PAYLOAD)
+    bad_payload["attributes"] = [
+        {
+            "name": "weird_attr",
+            "type": "unsupported_magic_type",
+            "value": "something",
+            "confidence": 0.8,
+            "evidence": {"source": {"type": "inferred"}, "explanation": "test"}
+        }
+    ]
+    try:
+        provider._parse_and_validate_response(bad_payload)
+        raise AssertionError("Should have failed validation for unsupported attribute type")
+    except GeminiResponseValidationError as e:
+        assert "validation error" in str(e).lower()
+
+run_test("J. Unsupported attribute type fails strict domain validation", test_j_unsupported_attribute_type_fails)
+
+# Test K: Missing confidence fails wire validation
+def test_k_missing_confidence_fails():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    bad_payload = json.loads(json.dumps(VALID_WIRE_PAYLOAD))
+    del bad_payload["title"]["confidence"]
+    try:
+        provider._parse_and_validate_response(bad_payload)
+        raise AssertionError("Should have failed validation for missing confidence")
+    except GeminiResponseValidationError as e:
+        assert "validation error" in str(e).lower()
+
+run_test("K. Missing confidence fails wire validation", test_k_missing_confidence_fails)
+
+# Test L: Missing evidence fails wire validation
+def test_l_missing_evidence_fails():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    bad_payload = json.loads(json.dumps(VALID_WIRE_PAYLOAD))
+    del bad_payload["brand"]["evidence"]
+    try:
+        provider._parse_and_validate_response(bad_payload)
+        raise AssertionError("Should have failed validation for missing evidence")
+    except GeminiResponseValidationError as e:
+        assert "validation error" in str(e).lower()
+
+run_test("L. Missing evidence fails wire validation", test_l_missing_evidence_fails)
+
+# Test M: Flat title string does NOT get silently coerced
+def test_m_flat_title_not_coerced():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    bad_payload = json.loads(json.dumps(VALID_WIRE_PAYLOAD))
+    bad_payload["title"] = "Flat Nike Title String"
+    try:
+        provider._parse_and_validate_response(bad_payload)
+        raise AssertionError("Should have failed validation for flat title string")
+    except GeminiResponseValidationError as e:
+        assert "validation error" in str(e).lower()
+
+run_test("M. Flat title string does NOT get silently coerced", test_m_flat_title_not_coerced)
+
+# Test N: Flat brand string does NOT get silently coerced
+def test_n_flat_brand_not_coerced():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    bad_payload = json.loads(json.dumps(VALID_WIRE_PAYLOAD))
+    bad_payload["brand"] = "Nike"
+    try:
+        provider._parse_and_validate_response(bad_payload)
+        raise AssertionError("Should have failed validation for flat brand string")
+    except GeminiResponseValidationError as e:
+        assert "validation error" in str(e).lower()
+
+run_test("N. Flat brand string does NOT get silently coerced", test_n_flat_brand_not_coerced)
+
+# Test O: Existing wrapper normalization still works if a wrapper is present
+def test_o_wrapper_normalization_works():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    wrapped = {"product_metadata": VALID_WIRE_PAYLOAD}
+    res = provider._parse_and_validate_response(wrapped)
+    assert res.title.value == "Nike Pegasus 40 Men's Road Running Shoes"
+    assert "color" in res.attributes
+
+run_test("O. Existing wrapper normalization still works if a wrapper is present", test_o_wrapper_normalization_works)
+
+# Test P: Unknown wrapper still fails
+def test_p_unknown_wrapper_fails():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    wrapped = {"unauthorized_envelope": VALID_WIRE_PAYLOAD}
+    try:
+        provider._parse_and_validate_response(wrapped)
+        raise AssertionError("Should have failed for unknown wrapper")
+    except GeminiResponseValidationError as e:
+        assert "validation error" in str(e).lower()
+
+run_test("P. Unknown wrapper still fails", test_p_unknown_wrapper_fails)
+
+# Test Q: Existing provider behavior remains intact (domain payload still parses directly)
+def test_q_existing_domain_payload_parses():
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"))
+    res = provider._parse_and_validate_response(VALID_AI_PAYLOAD)
+    assert res.title.value == "Nike Pegasus 40 Men's Road Running Shoes"
+    assert "color" in res.attributes
+
+run_test("Q. Existing provider behavior remains intact (domain payload parses directly)", test_q_existing_domain_payload_parses)
 
 print("=" * 60)
 print(f"FINAL RESULTS: {passed} PASSED, {failed} FAILED")

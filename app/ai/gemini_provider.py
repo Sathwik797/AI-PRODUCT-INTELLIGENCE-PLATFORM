@@ -126,7 +126,9 @@ class GeminiConfig(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     api_key: Optional[str] = None
-    model_name: str = "gemini-2.5-flash"
+    model_name: str = Field(
+        default_factory=lambda: os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
+    )
     temperature: float = Field(0.2, ge=0.0, le=2.0)
     max_output_tokens: Optional[int] = 4096
 
@@ -149,6 +151,78 @@ class GeminiConfig(BaseModel):
     def __repr__(self) -> str:
         key_status = "SET" if self.get_effective_api_key() else "UNSET"
         return f"GeminiConfig(model_name={self.model_name!r}, api_key=<{key_status}>, temperature={self.temperature})"
+
+
+# ==============================================================================
+# GEMINI WIRE DATA TRANSFER OBJECTS (Provider-Facing Fixed Schema)
+# Decouples the wire schema sent to Google Gemini from the domain schema.
+# Eliminates additionalProperties (dict) and Pydantic discriminated unions on the wire.
+# ==============================================================================
+
+class EvidenceSourceWire(BaseModel):
+    """Provider-facing wire schema for evidence source."""
+    model_config = ConfigDict(extra="ignore")
+    type: str = Field(..., description="Source type: 'image', 'seller', or 'inferred'.")
+    image_id: Optional[int] = Field(None, description="Numerical ID of image when source is 'image'.")
+
+
+class EvidenceWire(BaseModel):
+    """Provider-facing wire schema for field/attribute evidence."""
+    model_config = ConfigDict(extra="ignore")
+    source: EvidenceSourceWire = Field(..., description="Source of evidence.")
+    explanation: str = Field(..., description="Detailed explanation of evidence.")
+
+
+class TextFieldWire(BaseModel):
+    """Provider-facing wire schema for canonical text fields."""
+    model_config = ConfigDict(extra="ignore")
+    type: str = Field(default="text", description="Field type, default 'text'.")
+    value: Optional[str] = Field(None, description="Field string value, or null if unknown.")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score [0.0, 1.0].")
+    evidence: EvidenceWire = Field(..., description="Mandatory evidence supporting this field.")
+
+
+class CategoryValueWire(BaseModel):
+    """Provider-facing wire schema for category classification values."""
+    model_config = ConfigDict(extra="ignore")
+    recommended_category_id: Optional[int] = Field(None, description="Matching category ID.")
+    recommended_category_name: Optional[str] = Field(None, description="Matching category name.")
+    proposed_category: Optional[str] = Field(None, description="Proposed subcategory name.")
+
+
+class CategoryFieldWire(BaseModel):
+    """Provider-facing wire schema for product category field."""
+    model_config = ConfigDict(extra="ignore")
+    value: Optional[CategoryValueWire] = Field(None, description="Category classification details, or null.")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score [0.0, 1.0].")
+    evidence: EvidenceWire = Field(..., description="Mandatory evidence supporting category.")
+
+
+class AttributeItemWire(BaseModel):
+    """Provider-facing wire schema for an attribute item in the attributes array."""
+    model_config = ConfigDict(extra="ignore")
+    name: str = Field(..., description="Name of the attribute (e.g. 'color', 'material', 'weight').")
+    type: str = Field(default="text", description="Semantic attribute type: text, number, boolean, measurement, etc.")
+    value: Optional[Any] = Field(None, description="Attribute value, or null if unknown.")
+    unit: Optional[str] = Field(None, description="Unit of measurement if applicable.")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score [0.0, 1.0].")
+    evidence: EvidenceWire = Field(..., description="Mandatory evidence supporting this attribute.")
+
+
+class GeminiProductMetadataWire(BaseModel):
+    """Provider-facing fixed structured output wire schema for Google Gemini.
+
+    Uses an array of AttributeItemWire objects instead of a dynamic dictionary,
+    guaranteeing full compatibility with Gemini Developer API without triggering additionalProperties.
+    """
+    model_config = ConfigDict(extra="ignore")
+    title: TextFieldWire = Field(..., description="Suggested e-commerce product title.")
+    description: TextFieldWire = Field(..., description="Product marketing and technical description.")
+    brand: TextFieldWire = Field(..., description="Detected product brand.")
+    category: CategoryFieldWire = Field(..., description="Category classification.")
+    tags: list[str] = Field(default_factory=list, description="Categorical discovery tags.")
+    keywords: list[str] = Field(default_factory=list, description="High-intent search keywords.")
+    attributes: list[AttributeItemWire] = Field(default_factory=list, description="Array of structured attribute items.")
 
 
 # ==============================================================================
@@ -202,8 +276,20 @@ class GeminiProvider:
             "1. ROLE\n"
             "You are an e-commerce product intelligence system producing structured catalog metadata.\n\n"
             "2. OUTPUT CONFORMANCE\n"
-            "Return ONLY data strictly conforming to the supplied AIProductMetadata JSON schema. "
-            "Do not include markdown wrappers, conversational commentary, or unverified keys.\n\n"
+            "Return ONLY a single valid JSON object strictly conforming to the GeminiProductMetadataWire contract.\n\n"
+            "CRITICAL ROOT STRUCTURE: The JSON root object must contain these fields directly at the top level:\n"
+            "- title\n"
+            "- description\n"
+            "- brand\n"
+            "- category\n"
+            "- tags\n"
+            "- keywords\n"
+            "- attributes\n\n"
+            "Do NOT wrap the output in a top-level 'product_metadata', 'metadata', 'product', or other container key.\n"
+            "Do not include markdown code fencing, commentary, or unverified keys.\n\n"
+            "ATTRIBUTES FORMAT: attributes must be an array of objects. Each object must contain:\n"
+            "name, type, value, unit, confidence, evidence.\n"
+            "The application will convert this attribute array into its internal attribute dictionary.\n\n"
             "3. GROUNDING & EVIDENCE\n"
             "Every top-level field and attribute requires: value, confidence (0.0 to 1.0), and evidence.\n"
             "Explicitly distinguish between evidence source types:\n"
@@ -371,7 +457,7 @@ class GeminiProvider:
                             temperature=self.config.temperature,
                             max_output_tokens=self.config.max_output_tokens,
                             response_mime_type="application/json",
-                            response_schema=AIProductMetadata,
+                            response_schema=GeminiProductMetadataWire,
                         )
                         return client.models.generate_content(
                             model=self.config.model_name,
@@ -379,9 +465,8 @@ class GeminiProvider:
                             config=config,
                         )
                     except ValueError as ve:
-                        if "additionalProperties" in str(ve):
-                            # Developer API mode does not support additionalProperties in response_schema.
-                            # Fall back to structured JSON output with prompt-grounded schema.
+                        # Defensive fallback only if SDK/API cannot serialize schema
+                        if "schema" in str(ve).lower() or "additionalproperties" in str(ve).lower():
                             fallback_config = types.GenerateContentConfig(
                                 system_instruction=request_payload["system_instruction"],
                                 temperature=self.config.temperature,
@@ -409,7 +494,7 @@ class GeminiProvider:
                     system_instruction=request_payload["system_instruction"],
                     user_text=request_payload["user_text"],
                     images=request_payload["images"],
-                    response_schema=AIProductMetadata,
+                    response_schema=GeminiProductMetadataWire,
                 )
 
             # 3. Direct callable mock
@@ -427,16 +512,99 @@ class GeminiProvider:
         except Exception as e:
             raise GeminiAPIError(f"Gemini API generation call failed: {e}") from e
 
+    @staticmethod
+    def _evidence_wire_to_dict(ev: EvidenceWire) -> dict[str, Any]:
+        """Converts an EvidenceWire DTO into the dictionary structure expected by Evidence model."""
+        source_dict: dict[str, Any] = {"type": ev.source.type}
+        if ev.source.type == "image" and ev.source.image_id is not None:
+            source_dict["image_id"] = ev.source.image_id
+        return {
+            "source": source_dict,
+            "explanation": ev.explanation,
+        }
+
+    def _wire_to_domain_metadata(self, wire: GeminiProductMetadataWire) -> AIProductMetadata:
+        """Transforms a GeminiProductMetadataWire DTO into the canonical AIProductMetadata domain model.
+
+        Converts the wire attribute array [AttributeItemWire] into the domain attribute
+        dictionary dict[str, AttributeField] keyed by attribute name.
+        Preserves exact confidence scores, evidence objects, and types.
+        """
+        cat_val = None
+        if wire.category.value:
+            cat_val = wire.category.value.model_dump()
+
+        domain_dict: dict[str, Any] = {
+            "title": {
+                "type": wire.title.type or "text",
+                "value": wire.title.value,
+                "confidence": wire.title.confidence,
+                "evidence": self._evidence_wire_to_dict(wire.title.evidence),
+            },
+            "description": {
+                "type": wire.description.type or "text",
+                "value": wire.description.value,
+                "confidence": wire.description.confidence,
+                "evidence": self._evidence_wire_to_dict(wire.description.evidence),
+            },
+            "brand": {
+                "type": wire.brand.type or "text",
+                "value": wire.brand.value,
+                "confidence": wire.brand.confidence,
+                "evidence": self._evidence_wire_to_dict(wire.brand.evidence),
+            },
+            "category": {
+                "value": cat_val,
+                "confidence": wire.category.confidence,
+                "evidence": self._evidence_wire_to_dict(wire.category.evidence),
+            },
+            "tags": wire.tags,
+            "keywords": wire.keywords,
+            "attributes": {},
+        }
+
+        for attr in wire.attributes:
+            attr_dict: dict[str, Any] = {
+                "type": attr.type,
+                "value": attr.value,
+                "confidence": attr.confidence,
+                "evidence": self._evidence_wire_to_dict(attr.evidence),
+            }
+            if attr.unit is not None:
+                attr_dict["unit"] = attr.unit
+            domain_dict["attributes"][attr.name] = attr_dict
+
+        try:
+            return AIProductMetadata.model_validate(domain_dict)
+        except ValidationError as e:
+            raise GeminiResponseValidationError(
+                f"Transformed Gemini wire output failed validation against AIProductMetadata contract: {e}"
+            ) from e
+
     def _parse_and_validate_response(self, raw_response: Any) -> AIProductMetadata:
         """Parses model output and validates against AIProductMetadata schema."""
-        data_to_validate: Any = None
-
         # 1. Direct AIProductMetadata instance
         if isinstance(raw_response, AIProductMetadata):
             return raw_response
 
-        # 2. Response object with text property (most common Gemini SDK response)
-        if hasattr(raw_response, "text") and isinstance(raw_response.text, str):
+        # 2. Direct GeminiProductMetadataWire instance
+        if isinstance(raw_response, GeminiProductMetadataWire):
+            return self._wire_to_domain_metadata(raw_response)
+
+        data_to_validate: Any = None
+
+        # 3. Response object with parsed attribute (typed object mode)
+        if hasattr(raw_response, "parsed"):
+            parsed_val = raw_response.parsed
+            if isinstance(parsed_val, AIProductMetadata):
+                return parsed_val
+            elif isinstance(parsed_val, GeminiProductMetadataWire):
+                return self._wire_to_domain_metadata(parsed_val)
+            elif isinstance(parsed_val, dict):
+                data_to_validate = parsed_val
+
+        # 4. Response object with text property (most common Gemini SDK response)
+        if data_to_validate is None and hasattr(raw_response, "text") and isinstance(raw_response.text, str):
             text = raw_response.text.strip()
             # Strip markdown code fencing if returned by model
             if text.startswith("```json"):
@@ -452,27 +620,49 @@ class GeminiProvider:
             except json.JSONDecodeError as e:
                 raise GeminiResponseValidationError(f"Failed to parse Gemini response as JSON: {e}") from e
 
-        # 3. Response object with parsed attribute (typed object mode)
-        elif hasattr(raw_response, "parsed") and isinstance(raw_response.parsed, (dict, AIProductMetadata)):
-            data_to_validate = raw_response.parsed
-
-        # 4. Raw dictionary
-        elif isinstance(raw_response, dict):
+        # 5. Raw dictionary
+        elif data_to_validate is None and isinstance(raw_response, dict):
             data_to_validate = raw_response
 
-        # 5. Raw string
-        elif isinstance(raw_response, str):
+        # 6. Raw string
+        elif data_to_validate is None and isinstance(raw_response, str):
             try:
                 data_to_validate = json.loads(raw_response)
             except json.JSONDecodeError as e:
                 raise GeminiResponseValidationError(f"Failed to parse string response as JSON: {e}") from e
 
-        else:
+        elif data_to_validate is None:
             raise GeminiResponseValidationError(
                 f"Unrecognized response format from Gemini provider: {type(raw_response)}"
             )
 
-        # Validate through Pydantic AIProductMetadata contract
+        # Defensive normalization for known container wrappers (e.g. {"product_metadata": {...}})
+        if isinstance(data_to_validate, dict) and "title" not in data_to_validate:
+            for wrapper_key in ("product_metadata", "metadata", "product", "data"):
+                inner = data_to_validate.get(wrapper_key)
+                if isinstance(inner, dict) and any(
+                    key in inner
+                    for key in ("title", "description", "brand", "category")
+                ):
+                    data_to_validate = inner
+                    break
+
+        if not isinstance(data_to_validate, dict):
+            raise GeminiResponseValidationError(
+                f"Expected JSON object response from Gemini, got {type(data_to_validate)}"
+            )
+
+        # Check if payload is in GeminiProductMetadataWire format (attributes is an array/list)
+        if isinstance(data_to_validate.get("attributes"), list):
+            try:
+                wire = GeminiProductMetadataWire.model_validate(data_to_validate)
+            except ValidationError as e:
+                raise GeminiResponseValidationError(
+                    f"Gemini output failed validation against GeminiProductMetadataWire contract: {e}"
+                ) from e
+            return self._wire_to_domain_metadata(wire)
+
+        # Otherwise validate directly through Pydantic AIProductMetadata contract (for domain-dict mock payloads)
         try:
             return AIProductMetadata.model_validate(data_to_validate)
         except ValidationError as e:
