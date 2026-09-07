@@ -12,8 +12,18 @@ from app.repositories.image_repository import ImageRepository
 from app.repositories.product_metadata_repository import ProductMetadataRepository
 from app.repositories.product_repository import ProductRepository
 from app.schemas.ai_generation import (
+    AIAcceptSelectedRequest,
+    AIAcceptanceResponse,
     AIGenerationStatusResponse,
     AIGenerationTriggerResponse,
+)
+from app.services.ai_acceptance_service import (
+    AIAcceptanceService,
+    AIAcceptanceServiceError,
+    AcceptanceValidationError,
+    InvalidGenerationStateError,
+    NoActiveGenerationError,
+    ProductNotFoundError as AcceptanceProductNotFoundError,
 )
 from app.services.ai_generation_service import (
     AIGenerationService,
@@ -39,6 +49,13 @@ ai_generation_service = AIGenerationService(
     category_repository=category_repository,
     ai_generation_repository=ai_generation_repository,
     product_metadata_repository=product_metadata_repository,
+)
+
+ai_acceptance_service = AIAcceptanceService(
+    product_repository=product_repository,
+    ai_generation_repository=ai_generation_repository,
+    product_metadata_repository=product_metadata_repository,
+    category_repository=category_repository,
 )
 
 
@@ -123,3 +140,110 @@ def get_ai_generation_status(
         completed_at=generation.completed_at,
         created_at=generation.created_at
     )
+
+
+@router.get(
+    "/products/{product_id}/ai/current",
+    response_model=AIGenerationStatusResponse,
+    status_code=status.HTTP_200_OK
+)
+def get_current_ai_generation(
+    product_id: int,
+    db: Session = Depends(get_db)
+):
+    """Retrieves the active current AI generation and its acceptance state for a product."""
+    try:
+        generation = ai_acceptance_service.get_active_generation(db, product_id)
+    except (AcceptanceProductNotFoundError, NoActiveGenerationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except InvalidGenerationStateError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve current generation: {e}"
+        )
+
+    return AIGenerationStatusResponse(
+        generation_id=generation.id,
+        product_id=generation.product_id,
+        generation_number=generation.generation_number,
+        status=generation.status,
+        output=generation.output,
+        acceptance_state=generation.acceptance_state,
+        processing_time=generation.processing_time,
+        error_message=generation.error_message,
+        started_at=generation.started_at,
+        completed_at=generation.completed_at,
+        created_at=generation.created_at
+    )
+
+
+@router.post(
+    "/products/{product_id}/ai/accept-all",
+    response_model=AIAcceptanceResponse,
+    status_code=status.HTTP_200_OK
+)
+def accept_all_ai_metadata(
+    product_id: int,
+    db: Session = Depends(get_db)
+):
+    """Accepts all valid AI-generated fields for the current active generation in one click."""
+    try:
+        return ai_acceptance_service.accept_all(db, product_id)
+    except (AcceptanceProductNotFoundError, NoActiveGenerationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except (InvalidGenerationStateError, AcceptanceValidationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to accept AI metadata: {e}"
+        )
+
+
+@router.post(
+    "/products/{product_id}/ai/review",
+    response_model=AIAcceptanceResponse,
+    status_code=status.HTTP_200_OK
+)
+def review_ai_metadata(
+    product_id: int,
+    payload: AIAcceptSelectedRequest,
+    db: Session = Depends(get_db)
+):
+    """Applies granular field-level seller review decisions to the current active generation."""
+    try:
+        return ai_acceptance_service.review_selected(
+            db=db,
+            product_id=product_id,
+            decisions=payload.decisions
+        )
+    except (AcceptanceProductNotFoundError, NoActiveGenerationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except (InvalidGenerationStateError, AcceptanceValidationError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to apply AI metadata review: {e}"
+        )
+

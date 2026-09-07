@@ -4,16 +4,19 @@ from app.models.product import Product
 from app.repositories.category_repository import CategoryRepository
 from app.repositories.product_repository import ProductRepository
 from app.schemas.product import ProductCreate, ProductUpdate
+from app.services.ai_acceptance_service import AIAcceptanceService
 
 class ProductService:
 
     def __init__(
         self,
         product_repository: ProductRepository,
-        category_repository: CategoryRepository
+        category_repository: CategoryRepository,
+        ai_acceptance_service: AIAcceptanceService,
     ):
         self.product_repository = product_repository
         self.category_repository = category_repository
+        self.ai_acceptance_service = ai_acceptance_service
     
     def create(
         self,
@@ -132,6 +135,13 @@ class ProductService:
         # Update only the provided fields
         for field, value in update_data.items():
             setattr(product, field, value)
+
+        # Synchronize manual seller edits with active AI metadata acceptance state
+        self.ai_acceptance_service.on_manual_product_update(
+            db=db,
+            product_id=product.id,
+            updated_fields=list(update_data.keys())
+        )
 
         # Save changes
         return self.product_repository.update(

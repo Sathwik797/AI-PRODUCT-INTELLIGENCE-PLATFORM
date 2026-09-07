@@ -11,6 +11,9 @@ from app.schemas.product import (
 
 from app.repositories.product_repository import ProductRepository
 from app.repositories.category_repository import CategoryRepository
+from app.repositories.ai_generation_repository import AIGenerationRepository
+from app.repositories.product_metadata_repository import ProductMetadataRepository
+from app.services.ai_acceptance_service import AIAcceptanceService
 from app.services.product_service import ProductService
 
 
@@ -21,10 +24,20 @@ router = APIRouter(
 
 product_repository = ProductRepository()
 category_repository = CategoryRepository()
+ai_generation_repository = AIGenerationRepository()
+product_metadata_repository = ProductMetadataRepository()
+
+ai_acceptance_service = AIAcceptanceService(
+    product_repository=product_repository,
+    ai_generation_repository=ai_generation_repository,
+    product_metadata_repository=product_metadata_repository,
+    category_repository=category_repository,
+)
 
 service = ProductService(
-    product_repository,
-    category_repository
+    product_repository=product_repository,
+    category_repository=category_repository,
+    ai_acceptance_service=ai_acceptance_service,
 )
 
 @router.post(

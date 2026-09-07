@@ -22,11 +22,13 @@ class ProductRepository:
     def update(
         self,
         db: Session,
-        product: Product
+        product: Product,
+        commit: bool = True
     ) -> Product:
 
-        db.commit()
-        db.refresh(product)
+        if commit:
+            db.commit()
+            db.refresh(product)
 
         return product
     

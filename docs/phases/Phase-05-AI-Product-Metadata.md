@@ -216,3 +216,69 @@ Background Task Lifecycle (Post-Response)
 5. **Generation Numbering Concurrency Limitation**:
    - Sequential numbering is calculated via `MAX(generation_number) + 1`. In high-concurrency environments with parallel requests, database-level locking or unique constraints would be needed to prevent race conditions.
 
+---
+
+---
+
+# Step 7: AI Metadata Acceptance & Seller Review
+
+Step 7 introduces the **Human-in-the-Loop Seller Review & Acceptance boundary**, enabling sellers to review advisory AI metadata and merge approved fields into canonical product records.
+
+## 1. Architectural Invariants
+
+1. **Zero Direct AI Overwrites**:
+   - AI generation outputs are never written directly to the `products` table. Only explicit seller review or acceptance copies approved values.
+2. **Canonical Column Boundary**:
+   - The canonical `products` table has strict columns: `title`, `description`, `brand`, `sku`, `price`, `status`, `category_id`.
+   - AI metadata suggestions for `title`, `description`, `brand`, and `category` map to canonical columns.
+   - Non-canonical fields (`tags`, `keywords`, `attributes`) are accepted for indexing and discovery in `ai_generations.acceptance_state`, but never written to `products` or returned in `applied_fields`.
+3. **Immutable Historical Output**:
+   - `ai_generations.output` remains completely immutable and preserves the exact Gemini output.
+   - Review transitions update `ai_generations.acceptance_state` only.
+4. **Field-Level State Machine**:
+   - Each field tracks: `pending` -> `accepted` | `modified` | `rejected`.
+5. **Manual Seller Edit Synchronization**:
+   - When a seller later manually edits a canonical field (`PUT /products/{id}`) that was previously `accepted` from the active AI generation, `ProductService.update()` automatically transitions that field's state to `modified`.
+6. **Atomic Multi-Entity Transactions**:
+   - Updating `Product` columns and `AIGeneration.acceptance_state` executes within the exact same database transaction (`commit=False` followed by atomic `db.commit()`).
+
+---
+
+## 2. Endpoints
+
+### `GET /products/{product_id}/ai/current`
+- **Purpose**: Retrieves the active current AI generation, execution metrics, output, and acceptance state.
+- **Status Code**: `200 OK`
+
+### `POST /products/{product_id}/ai/accept-all`
+- **Purpose**: One-click acceptance of all AI-generated fields for the active generation.
+- **Status Code**: `200 OK`
+- **Response**: `AIAcceptanceResponse` with `applied_fields` (canonical only) and updated `acceptance_state`.
+
+### `POST /products/{product_id}/ai/review`
+- **Purpose**: Granular field-by-field review (`accept`, `modify`, `reject`, `pending`).
+- **Status Code**: `200 OK`
+- **Request Body**:
+  ```json
+  {
+    "decisions": {
+      "title": { "action": "accept" },
+      "description": { "action": "modify", "modified_value": "Seller revised copy" },
+      "brand": { "action": "reject" },
+      "category": { "action": "accept" },
+      "tags": { "action": "accept" }
+    }
+  }
+  ```
+- **Response**: `AIAcceptanceResponse`
+
+---
+
+## 3. Dedicated Service Architecture
+
+- **`AIAcceptanceService`** (`app/services/ai_acceptance_service.py`):
+  - Encapsulates review state transitions, field-specific business validation (lengths, non-empty title, category existence in DB), atomic transaction coordination, and the `on_manual_product_update()` sync hook.
+- **`ProductService`** (`app/services/product_service.py`):
+  - Injects `AIAcceptanceService` explicitly to synchronize seller updates.
+
+
