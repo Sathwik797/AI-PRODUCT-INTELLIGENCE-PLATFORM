@@ -67,6 +67,7 @@ class AIImageInput:
     file_path: Optional[str] = None
     mime_type: str = "image/jpeg"
     display_order: Optional[int] = None
+    role: Optional[str] = None  # Optional seller image-role override (e.g., 'front', 'packaging', 'label')
 
     def get_bytes(self) -> bytes:
         """Retrieves raw image bytes from memory or file path."""
@@ -93,8 +94,23 @@ class AIProductContext:
     brand: Optional[str] = None
     price: Optional[float] = None
     category_hint: Optional[str] = None
+    current_category: Optional[str] = None
     existing_categories: list[str] = field(default_factory=list)
+    available_categories: list[str] = field(default_factory=list)
     images: list[AIImageInput] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Synchronize category_hint and current_category for seamless interoperability
+        if not self.current_category and self.category_hint:
+            self.current_category = self.category_hint
+        elif not self.category_hint and self.current_category:
+            self.category_hint = self.current_category
+
+        # Synchronize existing_categories and available_categories
+        if not self.available_categories and self.existing_categories:
+            self.available_categories = list(self.existing_categories)
+        elif not self.existing_categories and self.available_categories:
+            self.existing_categories = list(self.available_categories)
 
 
 # ==============================================================================
@@ -181,27 +197,89 @@ class GeminiProvider:
     def build_system_prompt(self) -> str:
         """System instruction establishing AI product metadata extraction and strict grounding rules."""
         return (
-            "You are an expert e-commerce catalog intelligence system.\n"
-            "Analyze the provided product images and seller context to generate structured product metadata.\n\n"
-            "Strict Guidelines:\n"
-            "1. Output MUST strictly adhere to the provided JSON schema.\n"
-            "2. Grounding & Evidence: Every field and attribute requires evidence citing its source and an explanation.\n"
-            "   Explicitly distinguish between evidence source types:\n"
-            "   - 'image': Information directly supported by the supplied image (must include the exact image_id).\n"
-            "   - 'seller': Information explicitly supplied by seller/product context.\n"
-            "   - 'inferred': A genuine inference derived from available evidence.\n"
-            "   CRITICAL: Never represent inferred information as directly observed visual fact.\n"
-            "3. Unknown Values: If an attribute cannot be determined with confidence, set value=null with confidence=0.0 "
-            "and provide evidence explaining why the attribute is unknown.\n"
-            "4. Dual Category: Pick the best matching existing category if applicable, and suggest a more specific "
-            "subcategory if the existing taxonomy is too broad. Do not mutate existing taxonomy.\n"
-            "5. Confidence: Numerical score between 0.0 and 1.0 reflecting verification certainty."
+            "You are an expert e-commerce catalog intelligence system producing structured product metadata.\n\n"
+            "STRICT OPERATIONAL GUIDELINES:\n\n"
+            "1. ROLE\n"
+            "You are an e-commerce product intelligence system producing structured catalog metadata.\n\n"
+            "2. OUTPUT CONFORMANCE\n"
+            "Return ONLY data strictly conforming to the supplied AIProductMetadata JSON schema. "
+            "Do not include markdown wrappers, conversational commentary, or unverified keys.\n\n"
+            "3. GROUNDING & EVIDENCE\n"
+            "Every top-level field and attribute requires: value, confidence (0.0 to 1.0), and evidence.\n"
+            "Explicitly distinguish between evidence source types:\n"
+            "- 'image': Information directly supported by the supplied image (must include the exact image_id).\n"
+            "- 'seller': Information explicitly supplied by seller/product context.\n"
+            "- 'inferred': A genuine inference derived from available evidence.\n"
+            "CRITICAL: Never represent inferred information as directly observed visual fact.\n\n"
+            "4. UNKNOWN VALUES & NO GUESSING\n"
+            "If information cannot be determined reliably from images or seller context:\n"
+            "- set value = null\n"
+            "- set confidence = 0.0\n"
+            "- provide an evidence object explaining why it is unknown.\n"
+            "Do not guess, extrapolate, or invent plausible values.\n\n"
+            "5. IMAGE EVIDENCE PRIORITY\n"
+            "For visually verifiable properties (e.g., color, pattern, form factor, visible materials, physical ports), "
+            "images are primary evidence. Seller information is contextual evidence. Neither source is automatically infallible.\n\n"
+            "6. CONFLICT RESOLUTION\n"
+            "- Seller vs Image: When seller claims and image evidence conflict, prefer strong, clearly observable visual "
+            "evidence for visually verifiable properties. Preserve seller information only when the property cannot be visually verified. "
+            "Expose uncertainty through lower confidence and explanatory evidence when the conflict cannot be reliably resolved.\n"
+            "- Multiple Images: When multiple images appear to conflict, determine whether the difference represents a legitimate "
+            "product variant (e.g. alternate colors, bundled accessories, multiple angles) or genuine contradiction. If there is a strong "
+            "hierarchical or physical explanation, resolve it; otherwise preserve uncertainty rather than inventing a resolution.\n\n"
+            "7. EXACT IMAGE IDENTITY\n"
+            "When citing 'image' evidence, you MUST cite the exact supplied numerical image_id. Never invent or hallucinate image IDs.\n\n"
+            "8. CATEGORY TAXONOMY MATCHING\n"
+            "- Match the product against the platform's existing category taxonomy.\n"
+            "- Recommend the best matching existing category when appropriate.\n"
+            "- If the existing taxonomy is too broad, propose a more specific subcategory in proposed_category.\n"
+            "- Do NOT mutate the taxonomy.\n"
+            "- Do NOT invent an existing category ID that was not provided.\n\n"
+            "9. SEMANTIC STRUCTURED ATTRIBUTES\n"
+            "Catalog attributes must use structured semantic types where appropriate:\n"
+            "- text: plain descriptive values.\n"
+            "- number: numeric metrics.\n"
+            "- boolean: binary features (e.g. waterproof, wireless).\n"
+            "- measurement: value + unit (e.g. weight, volume, battery capacity).\n"
+            "- range: min_value + max_value + unit (e.g. operating temperature, adjustable height).\n"
+            "- dimensions: length + width + height + unit.\n"
+            "- array: homogeneous list of typed values.\n"
+            "- object: structured key-value maps.\n"
+            "Use measurement, range, and dimensions structures whenever physical quantities are identified.\n\n"
+            "10. TAGS VS KEYWORDS\n"
+            "- Tags: Descriptive, authoritative catalog tags representing core features and taxonomy.\n"
+            "- Keywords: High-intent search and retrieval phrases. Keywords are non-authoritative search helpers and "
+            "must never be treated as canonical product facts.\n\n"
+            "11. PRODUCT VARIANTS\n"
+            "If images suggest legitimate product variants (e.g. multiple colors, editions, pack sizes):\n"
+            "- identify them in the metadata draft where the schema permits (e.g. in description or attributes).\n"
+            "- do not create ProductVariant records or invent database entity IDs.\n"
+            "- do not assume differences are contradictions without evidence.\n\n"
+            "12. IMAGE ROLES\n"
+            "If the system provides seller image-role information (e.g. front, back, packaging, nutrition_label):\n"
+            "- use it as helpful context for where to locate specific information.\n"
+            "- distinguish seller-provided role information from AI inference.\n"
+            "- do not invent persistent database role fields.\n\n"
+            "13. NO IMAGES BEHAVIOR\n"
+            "If no product images are provided:\n"
+            "- generation is still permitted using seller context alone.\n"
+            "- clearly reduce confidence scores for all visually dependent attributes.\n"
+            "- do NOT claim visual evidence or cite image sources when no images exist.\n\n"
+            "14. SELLER CLAIMS\n"
+            "Do not convert unsupported seller claims (e.g. 'world's best', 'military grade', unverified specs) into visual facts.\n\n"
+            "15. ANTI-HALLUCINATION SAFEGUARDS\n"
+            "Never invent: brand, material, dimensions, specifications, certifications, compatibility, model numbers, "
+            "safety claims, or performance claims unless directly corroborated by the provided images or seller context.\n\n"
+            "16. INTERNAL CONSISTENCY\n"
+            "Ensure the product receives internally consistent metadata across all fields (e.g., title, description, category, "
+            "attributes, and tags must align). Avoid contradictory statements unless the evidence demonstrates a genuine variant or conflict."
         )
 
     def build_multimodal_request(self, context: AIProductContext) -> dict[str, Any]:
         """Constructs the prompt and contents parts for the multimodal request.
 
-        Preserves image identities (image_id) and integrates seller metadata.
+        Preserves image identities (image_id), MIME types, display order,
+        and integrates seller context and category taxonomy.
         """
         prompt_parts: list[str] = [
             f"--- PRODUCT CONTEXT (Product ID: {context.product_id}) ---"
@@ -215,25 +293,37 @@ class GeminiProvider:
             prompt_parts.append(f"Seller Brand: {context.brand}")
         if context.price is not None:
             prompt_parts.append(f"Product Price: {context.price}")
-        if context.category_hint:
-            prompt_parts.append(f"Category Hint: {context.category_hint}")
-        if context.existing_categories:
-            cat_list = ", ".join(f'"{c}"' for c in context.existing_categories)
+        if context.current_category or context.category_hint:
+            cat_val = context.current_category or context.category_hint
+            prompt_parts.append(f"Current Category / Hint: {cat_val}")
+
+        categories = context.available_categories or context.existing_categories
+        if categories:
+            cat_list = ", ".join(f'"{c}"' for c in categories)
             prompt_parts.append(f"Available Platform Taxonomy Categories: [{cat_list}]")
 
         prompt_parts.append("\n--- PRODUCT IMAGES ---")
         prompt_parts.append(f"Total images provided: {len(context.images)}")
 
         image_items: list[dict[str, Any]] = []
-        for idx, img in enumerate(context.images, start=1):
+        if context.images:
             prompt_parts.append(
-                f"Image #{idx}: image_id={img.image_id}, display_order={img.display_order}, mime_type={img.mime_type}"
+                "NOTE ON IMAGE EVIDENCE: Each image below is uniquely identified by its exact image_id. "
+                "When citing visual evidence in your output, you MUST reference the exact image_id."
             )
-            image_items.append({
-                "image_id": img.image_id,
-                "mime_type": img.mime_type,
-                "bytes": img.get_bytes(),
-            })
+            for idx, img in enumerate(context.images, start=1):
+                order_info = f", display_order={img.display_order}" if img.display_order is not None else ""
+                role_info = f", seller_role='{img.role}'" if img.role else ""
+                prompt_parts.append(
+                    f"Image #{idx}: image_id={img.image_id}{order_info}, mime_type='{img.mime_type}'{role_info}"
+                )
+                image_items.append({
+                    "image_id": img.image_id,
+                    "mime_type": img.mime_type,
+                    "bytes": img.get_bytes(),
+                })
+        else:
+            prompt_parts.append("No product images provided. Analyze based on seller context alone.")
 
         user_text = "\n".join(prompt_parts)
         return {
@@ -275,18 +365,35 @@ class GeminiProvider:
                             types.Part.from_bytes(data=img["bytes"], mime_type=img["mime_type"])
                         )
 
-                    config = types.GenerateContentConfig(
-                        system_instruction=request_payload["system_instruction"],
-                        temperature=self.config.temperature,
-                        max_output_tokens=self.config.max_output_tokens,
-                        response_mime_type="application/json",
-                        response_schema=AIProductMetadata,
-                    )
-                    return client.models.generate_content(
-                        model=self.config.model_name,
-                        contents=contents,
-                        config=config,
-                    )
+                    try:
+                        config = types.GenerateContentConfig(
+                            system_instruction=request_payload["system_instruction"],
+                            temperature=self.config.temperature,
+                            max_output_tokens=self.config.max_output_tokens,
+                            response_mime_type="application/json",
+                            response_schema=AIProductMetadata,
+                        )
+                        return client.models.generate_content(
+                            model=self.config.model_name,
+                            contents=contents,
+                            config=config,
+                        )
+                    except ValueError as ve:
+                        if "additionalProperties" in str(ve):
+                            # Developer API mode does not support additionalProperties in response_schema.
+                            # Fall back to structured JSON output with prompt-grounded schema.
+                            fallback_config = types.GenerateContentConfig(
+                                system_instruction=request_payload["system_instruction"],
+                                temperature=self.config.temperature,
+                                max_output_tokens=self.config.max_output_tokens,
+                                response_mime_type="application/json",
+                            )
+                            return client.models.generate_content(
+                                model=self.config.model_name,
+                                contents=contents,
+                                config=fallback_config,
+                            )
+                        raise
                 except ImportError:
                     # Injected mock where models.generate_content is used without google-genai installed
                     return client.models.generate_content(
