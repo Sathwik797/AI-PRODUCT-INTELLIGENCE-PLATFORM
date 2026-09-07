@@ -15,10 +15,13 @@ Orchestrates the end-to-end lifecycle of an AI product metadata generation run:
 """
 
 from datetime import datetime, timezone
+import logging
 import time
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.ai.context_builder import AIProductContextBuilder
 from app.ai.gemini_provider import GeminiProvider
@@ -78,44 +81,35 @@ class AIGenerationService:
         self.provider = provider or GeminiProvider()
         self.context_builder = context_builder or AIProductContextBuilder()
 
-    def generate(
+    def create_pending_generation(
         self,
         db: Session,
-        product_id: int,
-        image_role_overrides: Optional[dict[int, str]] = None,
-        preloaded_image_bytes: Optional[dict[int, bytes]] = None,
+        product_id: int
     ) -> AIGeneration:
-        """Executes a complete AI product metadata generation run for a product.
+        """Validates product existence and creates an initial 'pending' AIGeneration record.
 
         Args:
             db: Active SQLAlchemy database session.
             product_id: Primary key of the product.
-            image_role_overrides: Optional mapping of image_id -> seller role.
-            preloaded_image_bytes: Optional mapping of image_id -> raw bytes.
 
         Returns:
-            Completed AIGeneration record with persisted structured output and acceptance state.
+            Newly created AIGeneration record with status='pending'.
 
         Raises:
-            ProductNotFoundError: If the product does not exist.
-            AIGenerationExecutionError: If AI generation fails (record is marked 'failed').
+            ProductNotFoundError: If the product does not exist in the database.
         """
         # 1. Validate product exists
         product = self.product_repository.get_by_id(db, product_id)
         if not product:
             raise ProductNotFoundError(f"Product with id {product_id} not found.")
 
-        # 2. Gather domain data for AI context
-        images = self.image_repository.get_by_product(db, product_id)
-        categories = self.category_repository.get_all(db)
-
-        # 3. Determine monotonically increasing generation number
+        # 2. Determine monotonically increasing generation number
         generation_number = self.ai_generation_repository.get_next_generation_number(
             db=db,
             product_id=product_id
         )
 
-        # 4. Create initial generation record with status='pending'
+        # 3. Create initial generation record with status='pending'
         model_name = getattr(self.provider.config, "model_name", "gemini-2.5-flash")
         generation = AIGeneration(
             product_id=product_id,
@@ -126,23 +120,58 @@ class AIGenerationService:
             prompt_version=PROMPT_VERSION,
             schema_version=SCHEMA_VERSION,
         )
-        generation = self.ai_generation_repository.create(db, generation, commit=True)
+        return self.ai_generation_repository.create(db, generation, commit=True)
 
-        # 5. Transition state to 'processing' when execution starts
+    def process_generation(
+        self,
+        db: Session,
+        generation_id: int
+    ) -> AIGeneration:
+        """Processes an existing generation through the multimodal AI pipeline.
+
+        Enforces strict processing idempotency:
+        - If generation is already completed, failed, or processing, returns immediately
+          without invoking the provider or duplicating work.
+        - Only 'pending' generations transition to 'processing'.
+
+        Args:
+            db: Active SQLAlchemy database session.
+            generation_id: Primary key of the AIGeneration record.
+
+        Returns:
+            Updated AIGeneration record.
+
+        Raises:
+            AIGenerationServiceError: If generation record does not exist.
+            AIGenerationExecutionError: If generation inference or validation fails.
+        """
+        generation = self.ai_generation_repository.get_by_id(db, generation_id)
+        if not generation:
+            raise AIGenerationServiceError(f"AIGeneration with id {generation_id} not found.")
+
+        # Processing Idempotency: avoid duplicate processing if already claimed or finished
+        if generation.status in ("completed", "failed", "processing"):
+            return generation
+
+        # Transition state: pending -> processing
         generation.status = "processing"
         generation.started_at = datetime.now(timezone.utc)
         self.ai_generation_repository.update(db, generation, commit=True)
 
-        # 6. Execute AI generation with monotonic timer
         start_time = time.monotonic()
         try:
+            product = self.product_repository.get_by_id(db, generation.product_id)
+            if not product:
+                raise ProductNotFoundError(f"Product with id {generation.product_id} not found.")
+
+            images = self.image_repository.get_by_product(db, generation.product_id)
+            categories = self.category_repository.get_all(db)
+
             # Assemble decoupled DTO context
             ai_context = self.context_builder.build_context(
                 product=product,
                 images=images,
                 available_categories=categories,
-                image_role_overrides=image_role_overrides,
-                preloaded_image_bytes=preloaded_image_bytes,
             )
 
             # Invoke provider boundary
@@ -165,13 +194,13 @@ class AIGenerationService:
             generation.acceptance_state = acceptance_state
             generation.error_message = None
 
-            # 7. Final Success Transaction Coordination:
+            # Final Success Transaction Coordination:
             # Atomically commit the completed generation and the current_generation_id pointer
             # in the same database transaction so states never diverge.
             self.ai_generation_repository.update(db, generation, commit=False)
             self.product_metadata_repository.set_current_generation(
                 db=db,
-                product_id=product_id,
+                product_id=generation.product_id,
                 generation_id=generation.id,
                 commit=False
             )
@@ -183,14 +212,41 @@ class AIGenerationService:
         except Exception as exc:
             # Failure Path: Record failure state, elapsed time, and error message.
             processing_time = round(time.monotonic() - start_time, 3)
+
+            # Failure-safety rollback: clear any uncommitted or aborted transaction state
+            # on the database session before persisting the failure status.
+            try:
+                db.rollback()
+            except Exception as rb_exc:
+                logger.error("Session rollback failed for generation %s: %s", generation.id, rb_exc)
+
             generation.status = "failed"
             generation.completed_at = datetime.now(timezone.utc)
             generation.processing_time = processing_time
             generation.error_message = str(exc)
 
             # Persist failure status; DO NOT update ProductMetadata.current_generation_id
-            self.ai_generation_repository.update(db, generation, commit=True)
+            try:
+                self.ai_generation_repository.update(db, generation, commit=True)
+            except Exception as db_exc:
+                logger.critical(
+                    "Failed to record failure status for generation %s: %s",
+                    generation.id,
+                    db_exc
+                )
 
             raise AIGenerationExecutionError(
-                f"AI product metadata generation failed for product {product_id}: {exc}"
+                f"AI product metadata generation failed for product {generation.product_id}: {exc}"
             ) from exc
+
+    def generate(
+        self,
+        db: Session,
+        product_id: int
+    ) -> AIGeneration:
+        """Executes a complete AI product metadata generation run synchronously.
+
+        Delegates cleanly to create_pending_generation() and process_generation().
+        """
+        pending_generation = self.create_pending_generation(db, product_id)
+        return self.process_generation(db, pending_generation.id)

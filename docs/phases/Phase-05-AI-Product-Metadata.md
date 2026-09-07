@@ -108,9 +108,111 @@ Product (products)
 
 ---
 
-# Next Planned Steps for Phase 05
+---
 
-- **Step 2:** Pydantic schemas for AI generation output, prompt/schema versions, and acceptance feedback.
-- **Step 3:** Gemini Vision integration service and prompt orchestration.
-- **Step 4:** Repositories and service logic for triggering generations, recording metrics, and applying seller approval.
-- **Step 5:** REST API endpoints and background task integration.
+# Step 6: Asynchronous AI Generation & REST API Architecture
+
+Step 6 introduces asynchronous generation orchestration and REST endpoints to trigger and query product metadata generation without blocking the HTTP request thread.
+
+## 1. Endpoints
+
+### `POST /products/{product_id}/ai/generate`
+- **Purpose**: Initiates asynchronous generation for the given product.
+- **Status Code**: `202 Accepted`
+- **Response Payload**:
+  ```json
+  {
+    "generation_id": 1,
+    "product_id": 10,
+    "status": "pending"
+  }
+  ```
+- **Execution Flow**:
+  1. Validates that the product exists.
+  2. Creates exactly **one** `AIGeneration` record with `status="pending"`.
+  3. Commits the record to guarantee persistence.
+  4. Dispatches background processing via `BackgroundTasks` with the created `generation_id`.
+  5. Returns HTTP 202 immediately to the caller.
+
+### `GET /products/{product_id}/ai/generations/{generation_id}`
+- **Purpose**: Queries execution status, latency, error details, and generated metadata.
+- **Status Code**: `200 OK` (or `404 Not Found` if the generation does not exist or does not match `product_id`).
+- **Response Payload (Completed)**:
+  ```json
+  {
+    "generation_id": 1,
+    "product_id": 10,
+    "generation_number": 1,
+    "status": "completed",
+    "output": { ... },
+    "acceptance_state": { "title": "pending", "description": "pending", ... },
+    "processing_time": 1.452,
+    "error_message": null,
+    "started_at": "2026-09-07T22:30:00Z",
+    "completed_at": "2026-09-07T22:30:01Z",
+    "created_at": "2026-09-07T22:29:59Z"
+  }
+  ```
+
+---
+
+## 2. BackgroundTasks & Session Isolation Architecture
+
+```
+HTTP POST Request Lifecycle
+   Client Request
+        ↓
+   [POST /products/{id}/ai/generate]
+        ↓
+   FastAPI Depends(get_db) creates request Session
+        ↓
+   AIGenerationService.create_pending_generation(db, product_id)
+        ↓
+   Persists AIGeneration (status='pending', generation_id=N)
+        ↓
+   Schedule BackgroundTasks(process_generation_task, generation_id=N)
+        ↓
+   HTTP 202 Accepted Response returned to client
+   (Request DB session closes)
+
+---------------------------------------------------------------------
+Background Task Lifecycle (Post-Response)
+   process_generation_task(generation_id=N)
+        ↓
+   Fresh Session: db = SessionLocal()
+        ↓
+   AIGenerationService.process_generation(db, generation_id=N)
+        ↓
+   Idempotency Check: if status is completed/failed/processing, skip
+        ↓
+   Transition: pending → processing
+        ↓
+   GeminiProvider.generate_product_metadata(...)
+        ↓
+   Atomic Success Transaction:
+      - Update AIGeneration (status='completed', output, acceptance_state)
+      - Update ProductMetadata.current_generation_id = N
+      - db.commit()
+        ↓
+   finally:
+      db.close() (Guaranteed connection return to pool)
+```
+
+---
+
+## 3. Key Design Decisions & Guarantees
+
+1. **Exact Generation Ownership (Zero Duplicate Generations)**:
+   - The generation record created by the POST endpoint is the exact record processed by the background task.
+   - The background task calls `process_generation(db, generation_id)`, NEVER `generate(db, product_id)`.
+2. **Processing Idempotency**:
+   - Only records in `pending` state may transition to `processing`.
+   - If `process_generation` is invoked on a generation that is already `processing`, `completed`, or `failed`, it returns immediately without re-invoking Gemini.
+3. **Database Session Safety**:
+   - The background task instantiates its own isolated `SessionLocal()` and closes it in a `finally` block, ensuring no stale or leaked sessions.
+4. **No External Task Queue (FastAPI BackgroundTasks)**:
+   - Built on FastAPI's lightweight `BackgroundTasks` without external infrastructure (Celery, Redis, RabbitMQ).
+   - *Note*: FastAPI BackgroundTasks executes in-process and is not a durable distributed queue. Future scaling can replace the adapter function with a durable queue worker without changing the service or API contract.
+5. **Generation Numbering Concurrency Limitation**:
+   - Sequential numbering is calculated via `MAX(generation_number) + 1`. In high-concurrency environments with parallel requests, database-level locking or unique constraints would be needed to prevent race conditions.
+

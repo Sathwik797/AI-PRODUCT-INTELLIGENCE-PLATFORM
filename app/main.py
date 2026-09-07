@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from app.api.category import router as category_router
 from app.api.product import router as product_router
 from app.api.image import router as image_router
+from app.api.ai_generation import router as ai_generation_router
 from app.core.config import settings
 from app.db.base import Base
 from app.db.database import engine
@@ -20,6 +21,7 @@ app = FastAPI(
 app.include_router(category_router)
 app.include_router(product_router)
 app.include_router(image_router)
+app.include_router(ai_generation_router)
 
 app.mount(
     "/uploads",
