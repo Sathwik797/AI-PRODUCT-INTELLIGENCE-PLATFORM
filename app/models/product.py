@@ -62,3 +62,16 @@ class Product(Base):
         back_populates="product",
         cascade="all, delete-orphan"
     )
+
+    metadata_record = relationship(
+        "ProductMetadata",
+        back_populates="product",
+        uselist=False,
+        cascade="all, delete-orphan"
+    )
+
+    ai_generations = relationship(
+        "AIGeneration",
+        back_populates="product",
+        cascade="all, delete-orphan"
+    )
