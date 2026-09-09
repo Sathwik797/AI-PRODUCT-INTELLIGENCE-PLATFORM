@@ -95,8 +95,8 @@ class AIProductContext:
     price: Optional[float] = None
     category_hint: Optional[str] = None
     current_category: Optional[str] = None
-    existing_categories: list[str] = field(default_factory=list)
-    available_categories: list[str] = field(default_factory=list)
+    existing_categories: list[Any] = field(default_factory=list)
+    available_categories: list[Any] = field(default_factory=list)
     images: list[AIImageInput] = field(default_factory=list)
 
     def __post_init__(self):
@@ -111,6 +111,37 @@ class AIProductContext:
             self.available_categories = list(self.existing_categories)
         elif not self.existing_categories and self.available_categories:
             self.existing_categories = list(self.available_categories)
+
+        # Normalize taxonomy categories to list of dicts: {"id": Optional[int], "name": str}
+        normalized: list[dict[str, Any]] = []
+        for cat in self.available_categories:
+            if isinstance(cat, dict):
+                c_id = cat.get("id")
+                try:
+                    c_id = int(c_id) if c_id is not None else None
+                except (ValueError, TypeError):
+                    c_id = None
+                c_name = str(cat.get("name") or "").strip()
+                if c_name:
+                    normalized.append({"id": c_id, "name": c_name})
+            elif isinstance(cat, str):
+                c_name = cat.strip()
+                if c_name:
+                    normalized.append({"id": None, "name": c_name})
+            else:
+                raw_id = getattr(cat, "id", None)
+                c_id = None
+                if raw_id is not None and not type(raw_id).__name__.startswith("MagicMock"):
+                    try:
+                        c_id = int(raw_id)
+                    except (ValueError, TypeError):
+                        c_id = None
+                c_name = str(getattr(cat, "name", str(cat)) or "").strip()
+                if c_name:
+                    normalized.append({"id": c_id, "name": c_name})
+
+        self.available_categories = normalized
+        self.existing_categories = list(normalized)
 
 
 # ==============================================================================
@@ -193,7 +224,10 @@ class CategoryValueWire(BaseModel):
 class CategoryFieldWire(BaseModel):
     """Provider-facing wire schema for product category field."""
     model_config = ConfigDict(extra="ignore")
-    value: Optional[CategoryValueWire] = Field(None, description="Category classification details, or null.")
+    value: Optional[CategoryValueWire] = Field(
+        None,
+        description="Category classification details. MUST NOT be null if product matches ANY category in the supplied platform taxonomy. Only null when no taxonomy category matches reliably."
+    )
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score [0.0, 1.0].")
     evidence: EvidenceWire = Field(..., description="Mandatory evidence supporting category.")
 
@@ -315,12 +349,30 @@ class GeminiProvider:
             "hierarchical or physical explanation, resolve it; otherwise preserve uncertainty rather than inventing a resolution.\n\n"
             "7. EXACT IMAGE IDENTITY\n"
             "When citing 'image' evidence, you MUST cite the exact supplied numerical image_id. Never invent or hallucinate image IDs.\n\n"
-            "8. CATEGORY TAXONOMY MATCHING\n"
+            "8. CATEGORY TAXONOMY MATCHING & CATEGORY OUTPUT REQUIREMENT\n"
+            "- The available platform taxonomy categories are provided as a list of objects, each containing an authoritative database ID ('id') and name ('name').\n"
             "- Match the product against the platform's existing category taxonomy.\n"
-            "- Recommend the best matching existing category when appropriate.\n"
-            "- If the existing taxonomy is too broad, propose a more specific subcategory in proposed_category.\n"
-            "- Do NOT mutate the taxonomy.\n"
-            "- Do NOT invent an existing category ID that was not provided.\n\n"
+            "- MANDATORY CATEGORY VALUE RULE:\n"
+            "  If the product matches ANY category in the supplied platform taxonomy:\n"
+            "  * category.value MUST NOT be null.\n"
+            "  * Set recommended_category_id to the exact id from the matching taxonomy item.\n"
+            "  * Set recommended_category_name to the exact name from the matching taxonomy item.\n"
+            "  * Do not put this information only in evidence.\n"
+            "  * Do not use inferred evidence as a substitute for the category value.\n"
+            "- Example:\n"
+            "  If taxonomy contains {\"id\": 3, \"name\": \"Shoes\"} and the product is a shoe:\n"
+            "  category: {\n"
+            "    \"value\": {\n"
+            "      \"recommended_category_id\": 3,\n"
+            "      \"recommended_category_name\": \"Shoes\",\n"
+            "      \"proposed_category\": null\n"
+            "    },\n"
+            "    \"confidence\": 1.0,\n"
+            "    \"evidence\": {\"source\": {\"type\": \"image\", \"image_id\": 1}, \"explanation\": \"Visual inspection confirms athletic shoes.\"}\n"
+            "  }\n"
+            "- If the existing taxonomy is too broad (e.g. 'Shoes'), provide the matching existing category (with its ID and name) AND propose a specific subcategory in 'proposed_category' (e.g. 'Sneakers').\n"
+            "- ONLY use category.value = null when no supplied taxonomy category can be matched reliably.\n"
+            "- Never invent, hallucinate, or guess a category ID that is not in the supplied taxonomy.\n\n"
             "9. SEMANTIC STRUCTURED ATTRIBUTES\n"
             "Catalog attributes must use structured semantic types where appropriate:\n"
             "- text: plain descriptive values.\n"
@@ -385,8 +437,13 @@ class GeminiProvider:
 
         categories = context.available_categories or context.existing_categories
         if categories:
-            cat_list = ", ".join(f'"{c}"' for c in categories)
-            prompt_parts.append(f"Available Platform Taxonomy Categories: [{cat_list}]")
+            cat_list: list[dict[str, Any]] = []
+            for c in categories:
+                if isinstance(c, dict):
+                    cat_list.append({"id": c.get("id"), "name": c.get("name") or ""})
+                else:
+                    cat_list.append({"id": getattr(c, "id", None), "name": getattr(c, "name", str(c))})
+            prompt_parts.append(f"Available Platform Taxonomy Categories: {json.dumps(cat_list)}")
 
         prompt_parts.append("\n--- PRODUCT IMAGES ---")
         prompt_parts.append(f"Total images provided: {len(context.images)}")

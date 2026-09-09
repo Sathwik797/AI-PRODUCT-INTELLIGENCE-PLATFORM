@@ -250,7 +250,7 @@ export const AIStudio: React.FC<AIStudioProps> = ({ productId, onProductUpdated 
               )}
             </div>
             <p className="text-xs text-slate-500">
-              Analyzes all product images + seller specs via Gemini 2.5 Flash to suggest verified metadata.
+              Analyzes all product images + seller specs via {generation?.model_name || 'gemini-3.1-flash-lite'} to suggest verified metadata.
             </p>
           </div>
 
@@ -346,7 +346,7 @@ export const AIStudio: React.FC<AIStudioProps> = ({ productId, onProductUpdated 
           <div className="flex items-center justify-between text-xs text-slate-500 bg-slate-100 px-4 py-2 rounded-md font-mono">
             <span className="flex items-center space-x-1.5">
               <Cpu className="w-3.5 h-3.5 text-slate-400" />
-              <span>Model: Gemini 2.5 Flash</span>
+              <span>Model: {generation.model_name || 'gemini-3.1-flash-lite'}</span>
             </span>
             <span>Latency: {generation.processing_time ? `${generation.processing_time}s` : 'N/A'}</span>
             <span>Status: Completed</span>

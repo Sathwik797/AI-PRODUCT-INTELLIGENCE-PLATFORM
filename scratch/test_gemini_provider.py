@@ -542,6 +542,54 @@ def test_q_existing_domain_payload_parses():
 
 run_test("Q. Existing provider behavior remains intact (domain payload parses directly)", test_q_existing_domain_payload_parses)
 
+# Test R: Provider does NOT synthesize category value from evidence explanation text
+def test_r_provider_does_not_synthesize_category_from_explanation():
+    client_mock = MagicMock()
+    payload_with_null_cat = json.loads(json.dumps(VALID_WIRE_PAYLOAD))
+    payload_with_null_cat["category"]["value"] = None
+    payload_with_null_cat["category"]["evidence"]["explanation"] = "The product is a sneaker which matches the 'Shoes' category in the platform taxonomy."
+
+    response_mock = MagicMock()
+    del response_mock.parsed
+    response_mock.text = json.dumps(payload_with_null_cat)
+    client_mock.generate_content.return_value = response_mock
+
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"), client=client_mock)
+    context = AIProductContext(
+        product_id=2,
+        title="Nike Sneakers",
+        available_categories=[{"id": 1, "name": "Books"}, {"id": 3, "name": "Shoes"}]
+    )
+
+    res = provider.generate_product_metadata(context)
+    # Regression guard: provider must NOT synthesize category from explanation text; value must remain None
+    assert res.category.value is None
+    assert res.category.evidence.explanation == "The product is a sneaker which matches the 'Shoes' category in the platform taxonomy."
+
+run_test("R. Provider does NOT synthesize category value from evidence explanation text", test_r_provider_does_not_synthesize_category_from_explanation)
+
+# Test S: Category resolution preserves explicit category recommendation when already provided
+def test_s_category_reinforcement_preserves_explicit():
+    client_mock = MagicMock()
+    response_mock = MagicMock()
+    del response_mock.parsed
+    response_mock.text = json.dumps(VALID_WIRE_PAYLOAD)
+    client_mock.generate_content.return_value = response_mock
+
+    provider = GeminiProvider(config=GeminiConfig(api_key="test-key"), client=client_mock)
+    context = AIProductContext(
+        product_id=2,
+        title="Nike Pegasus",
+        available_categories=[{"id": 1, "name": "Footwear"}, {"id": 2, "name": "Apparel"}]
+    )
+
+    res = provider.generate_product_metadata(context)
+    assert res.category.value is not None
+    assert res.category.value.recommended_category_id == 1
+    assert res.category.value.recommended_category_name == "Footwear"
+
+run_test("S. Category resolution preserves explicit category recommendation when already provided", test_s_category_reinforcement_preserves_explicit)
+
 print("=" * 60)
 print(f"FINAL RESULTS: {passed} PASSED, {failed} FAILED")
 print("=" * 60)

@@ -159,16 +159,32 @@ class AIProductContextBuilder:
         elif isinstance(product, dict):
             current_category = product.get("category_name") or product.get("category") or product.get("current_category")
 
-        # 4. Available Categories Taxonomy
-        resolved_categories: list[str] = []
+        # 4. Available Categories Taxonomy (Preserves ID and Name as pure decoupled dicts)
+        resolved_categories: list[dict[str, Any]] = []
         if available_categories:
-            seen = set()
+            seen: set[tuple[Optional[int], str]] = set()
             for cat in available_categories:
-                name = getattr(cat, "name", str(cat)) if cat is not None else ""
-                name = name.strip()
-                if name and name not in seen:
-                    seen.add(name)
-                    resolved_categories.append(name)
+                raw_id = getattr(cat, "id", None)
+                if raw_id is None and isinstance(cat, dict):
+                    raw_id = cat.get("id") or cat.get("category_id")
+
+                resolved_id: Optional[int] = None
+                if raw_id is not None and not type(raw_id).__name__.startswith("MagicMock"):
+                    try:
+                        resolved_id = int(raw_id)
+                    except (ValueError, TypeError):
+                        resolved_id = None
+
+                name = getattr(cat, "name", None)
+                if name is None and isinstance(cat, dict):
+                    name = cat.get("name") or cat.get("category_name")
+                if name is None:
+                    name = str(cat) if not isinstance(cat, dict) else ""
+                name = str(name).strip()
+
+                if name and (resolved_id, name) not in seen:
+                    seen.add((resolved_id, name))
+                    resolved_categories.append({"id": resolved_id, "name": name})
 
         # 5. Images Resolution & Sorting
         raw_images: Sequence[Any]

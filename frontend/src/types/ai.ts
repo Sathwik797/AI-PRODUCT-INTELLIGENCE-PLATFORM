@@ -84,6 +84,7 @@ export interface AIGenerationStatusResponse {
   started_at: string | null;
   completed_at: string | null;
   created_at: string | null;
+  model_name?: string | null;
 }
 
 export interface AIGenerationTriggerResponse {
