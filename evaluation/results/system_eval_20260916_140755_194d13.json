@@ -1,0 +1,165 @@
+{
+  "evaluation_version": "system_v1",
+  "run_id": "system_eval_20260916_140755_194d13",
+  "timestamp": "2026-09-16T14:07:55.257761+00:00",
+  "overall_status": "PASSED",
+  "hard_correctness_gates": {
+    "passed": true,
+    "total_checks": 27,
+    "total_violations": 0,
+    "violations": {
+      "invalid_citations": 0,
+      "hard_filter_violations": 0,
+      "inactive_product_leaks": 0,
+      "unaccepted_metadata_leaks": 0,
+      "recommendation_self_returns": 0,
+      "canonical_data_inconsistencies": 0
+    },
+    "failure_reasons": []
+  },
+  "integration_checks": {
+    "all_passed": true,
+    "scenarios": {
+      "scenario_a": {
+        "scenario_name": "Scenario A — Accepted Metadata Propagation",
+        "description": "Verifies accepted AI attributes propagate into embeddings, search availability, and RAG knowledge.",
+        "passed": true,
+        "checks_performed": 9,
+        "violations": []
+      },
+      "scenario_b": {
+        "scenario_name": "Scenario B — Rejected Metadata Isolation",
+        "description": "Verifies rejected/pending metadata never enters embeddings, search truth, or RAG claims.",
+        "passed": true,
+        "checks_performed": 3,
+        "violations": []
+      },
+      "scenario_c": {
+        "scenario_name": "Scenario C — Volatile Field Isolation",
+        "description": "Verifies price updates do not dirty embedding documents, but search and RAG use live MySQL price.",
+        "passed": true,
+        "checks_performed": 3,
+        "violations": []
+      },
+      "scenario_d": {
+        "scenario_name": "Scenario D — Inactive Product Isolation",
+        "description": "Verifies products with status != 'ACTIVE' are never returned in search, RAG, or recommendations.",
+        "passed": true,
+        "checks_performed": 2,
+        "violations": []
+      },
+      "scenario_e": {
+        "scenario_name": "Scenario E — Search to RAG Consistency",
+        "description": "Verifies RAG uses authoritative search candidates and separates retrieval match reasons from facts.",
+        "passed": true,
+        "checks_performed": 3,
+        "violations": []
+      },
+      "scenario_f": {
+        "scenario_name": "Scenario F — Recommendation Catalog Consistency",
+        "description": "Verifies recommendations are active catalog products and never recommend the source product.",
+        "passed": true,
+        "checks_performed": 1,
+        "violations": []
+      }
+    }
+  },
+  "quality_metrics": {
+    "search": {
+      "total_queries": 23,
+      "recall_at_10": 0.2632,
+      "hit_rate_at_10": 0.2174,
+      "ndcg_at_10": 0.2632,
+      "ndcg_at_20": 0.2632,
+      "mrr": 0.2632,
+      "hard_filter_violation_rate": 0.0
+    },
+    "rag": {
+      "total_queries_evaluated": 1,
+      "citation_validity_rate": 1.0,
+      "grounded_claim_coverage": 1.0,
+      "schema_validity_rate": 1.0,
+      "fallback_rate": 0.0,
+      "zero_result_accuracy": 1.0
+    },
+    "recommendations": {
+      "total_evaluations": 1,
+      "eligible_candidate_coverage": 0.0,
+      "mean_recommendation_score": 0.0,
+      "duplicate_suppression_count": 0,
+      "self_return_rate": 0.0
+    },
+    "embeddings": {
+      "total_embeddings": 0,
+      "ready_count": 0,
+      "pending_or_stale_count": 0,
+      "hash_consistency_rate": 1.0,
+      "vector_store_sync_rate": 1.0
+    }
+  },
+  "operational_metrics": {
+    "search_latency": {
+      "p50_ms": 520.01,
+      "p95_ms": 581.46,
+      "p99_ms": 592.88,
+      "mean_ms": 521.83
+    },
+    "rag_latency": {
+      "retrieval_mean_ms": 804.29,
+      "llm_mean_ms": 0.0,
+      "validation_mean_ms": 0.0,
+      "total_mean_ms": 804.29
+    },
+    "recommendation_latency": {
+      "p50_ms": 12.83,
+      "p95_ms": 12.83,
+      "p99_ms": 12.83,
+      "mean_ms": 12.83
+    },
+    "reliability": {
+      "total_requests": 6,
+      "failure_rate": 0.0,
+      "retry_rate": 0.0,
+      "fallback_rate": 0.0,
+      "degraded_mode_rate": 0.0
+    }
+  },
+  "catalog_limitations": {
+    "active_product_count": 1,
+    "catalog_assessment": "1 active catalog products",
+    "statistical_validity": "LOW",
+    "limitations_notice": "Catalog contains 1 active product(s). Metric averages reflect catalog size, not platform architecture defects. Hard correctness invariants remain strictly enforced."
+  },
+  "system_configuration": {
+    "app_name": "AI Product Intelligence Platform",
+    "app_version": "1.0.0",
+    "search": {
+      "mysql_candidate_k": 100,
+      "faiss_candidate_k": 100,
+      "max_candidate_k": 300,
+      "default_limit": 20,
+      "enable_expansion": true,
+      "semantic_weight": 0.65,
+      "structured_weight": 0.35
+    },
+    "rag": {
+      "max_context_products": 5,
+      "prompt_version": "rag_v1",
+      "model_name": "gemini-3.1-flash-lite",
+      "temperature": 0.2,
+      "max_output_tokens": 2048
+    },
+    "recommendation": {
+      "candidate_k": 50,
+      "default_limit": 5,
+      "max_limit": 20,
+      "semantic_weight": 0.4,
+      "category_weight": 0.25,
+      "attribute_weight": 0.15,
+      "price_weight": 0.1,
+      "brand_weight": 0.1,
+      "similarity_dedup_threshold": 0.95
+    }
+  },
+  "errors": []
+}

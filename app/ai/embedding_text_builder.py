@@ -14,10 +14,12 @@ from typing import Any, Optional
 BUILDER_VERSION: str = "v1"
 
 
-def normalize_whitespace(text: str) -> str:
+def normalize_whitespace(text: Any) -> str:
     """Collapses consecutive whitespace and trims ends."""
     if not text:
         return ""
+    if not isinstance(text, str):
+        text = str(text)
     return re.sub(r"\s+", " ", text).strip()
 
 

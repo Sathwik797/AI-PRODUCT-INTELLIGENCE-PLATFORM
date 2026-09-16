@@ -6,6 +6,7 @@ from app.api.image import router as image_router
 from app.api.ai_generation import router as ai_generation_router
 from app.api.search import router as search_router
 from app.api.rag import router as rag_router
+from app.api.recommendation import router as recommendation_router
 from app.core.config import settings
 from fastapi.staticfiles import StaticFiles
 
@@ -22,6 +23,7 @@ app.include_router(image_router)
 app.include_router(ai_generation_router)
 app.include_router(search_router)
 app.include_router(rag_router)
+app.include_router(recommendation_router)
 
 app.mount(
     "/uploads",
