@@ -76,11 +76,13 @@ class AIAcceptanceService:
         ai_generation_repository: AIGenerationRepository,
         product_metadata_repository: ProductMetadataRepository,
         category_repository: CategoryRepository,
+        embedding_service: Optional[Any] = None,
     ):
         self.product_repository = product_repository
         self.ai_generation_repository = ai_generation_repository
         self.product_metadata_repository = product_metadata_repository
         self.category_repository = category_repository
+        self.embedding_service = embedding_service
 
     def get_active_generation(
         self,
@@ -125,7 +127,8 @@ class AIAcceptanceService:
     def accept_all(
         self,
         db: Session,
-        product_id: int
+        product_id: int,
+        background_tasks: Optional[Any] = None
     ) -> AIAcceptanceResponse:
         """Accepts all valid AI-generated metadata for the active generation in one click.
 
@@ -137,9 +140,10 @@ class AIAcceptanceService:
         Args:
             db: Active SQLAlchemy database session.
             product_id: Primary key of the product.
+            background_tasks: Optional FastAPI BackgroundTasks instance to schedule async embeddings.
 
         Returns:
-            AIAcceptanceResponse summarizing applied fields and updated state.
+            AIAcceptanceResponse with applied fields and full updated review status.
         """
         product = self.product_repository.get_by_id(db, product_id)
         if not product:
@@ -150,43 +154,56 @@ class AIAcceptanceService:
         acc_state = dict(generation.acceptance_state or {})
         applied_fields: list[str] = []
 
-        # 1. Canonical: title (max 255 chars, non-empty)
-        title_node = output.get("title") or {}
-        title_val = title_node.get("value")
-        if title_val and isinstance(title_val, str) and title_val.strip():
-            product.title = title_val.strip()[:255]
+        # 1. Canonical: Title
+        if output.get("title") and output["title"].get("value"):
+            product.title = str(output["title"]["value"]).strip()
             acc_state["title"] = "accepted"
             applied_fields.append("title")
+        else:
+            acc_state["title"] = "rejected"
 
-        # 2. Canonical: description (max 1000 chars)
-        desc_node = output.get("description") or {}
-        desc_val = desc_node.get("value")
-        if desc_val is not None and isinstance(desc_val, str):
-            product.description = desc_val[:1000]
+        # 2. Canonical: Description
+        if output.get("description") and output["description"].get("value"):
+            product.description = str(output["description"]["value"]).strip()
             acc_state["description"] = "accepted"
             applied_fields.append("description")
+        else:
+            acc_state["description"] = "rejected"
 
-        # 3. Canonical: brand (max 100 chars)
-        brand_node = output.get("brand") or {}
-        brand_val = brand_node.get("value")
-        if brand_val is not None and isinstance(brand_val, str):
-            product.brand = brand_val[:100]
+        # 3. Canonical: Brand
+        if output.get("brand") and output["brand"].get("value"):
+            product.brand = str(output["brand"]["value"]).strip()
             acc_state["brand"] = "accepted"
             applied_fields.append("brand")
+        else:
+            acc_state["brand"] = "rejected"
 
-        # 4. Canonical: category (requires existing category ID in taxonomy)
-        cat_node = output.get("category") or {}
-        cat_val = cat_node.get("value") or {}
-        rec_cat_id = cat_val.get("recommended_category_id")
-        if rec_cat_id is not None and isinstance(rec_cat_id, int):
-            existing_cat = self.category_repository.get_by_id(db, rec_cat_id)
-            if existing_cat:
-                product.category_id = rec_cat_id
-                acc_state["category"] = "accepted"
-                applied_fields.append("category_id")
-            else:
-                # Proposed or missing category cannot overwrite non-nullable FK
-                acc_state["category"] = "rejected"
+        # 4. Canonical: Category
+        # Category resolution rule:
+        # If recommended_category_id is provided and valid, use it.
+        # Fallback: if only recommended_category_name is provided, match by name.
+        cat_field = output.get("category")
+        matched_cat_id: Optional[int] = None
+
+        if cat_field and cat_field.get("value"):
+            cat_val = cat_field["value"]
+            rec_id = cat_val.get("recommended_category_id")
+            rec_name = cat_val.get("recommended_category_name")
+
+            if rec_id:
+                existing_cat = self.category_repository.get_by_id(db, rec_id)
+                if existing_cat:
+                    matched_cat_id = existing_cat.id
+
+            if not matched_cat_id and rec_name:
+                matched_by_name = self.category_repository.get_by_name(db, rec_name.strip())
+                if matched_by_name:
+                    matched_cat_id = matched_by_name.id
+
+        if matched_cat_id:
+            product.category_id = matched_cat_id
+            acc_state["category"] = "accepted"
+            applied_fields.append("category_id")
         else:
             acc_state["category"] = "rejected"
 
@@ -201,12 +218,26 @@ class AIAcceptanceService:
             self.product_repository.update(db, product, commit=False)
             generation.acceptance_state = acc_state
             self.ai_generation_repository.update(db, generation, commit=False)
+            if self.embedding_service:
+                self.embedding_service.invalidate_embedding(db, product.id, commit=False)
             db.commit()
             db.refresh(product)
             db.refresh(generation)
         except Exception:
             db.rollback()
             raise
+
+        if self.embedding_service and background_tasks is not None:
+            try:
+                from app.services.embedding_service import run_async_product_embedding
+                _, expected_hash = self.embedding_service.build_embedding_document(db, product)
+                background_tasks.add_task(
+                    run_async_product_embedding,
+                    product.id,
+                    expected_hash
+                )
+            except Exception:
+                pass
 
         return AIAcceptanceResponse(
             product_id=product.id,
@@ -220,7 +251,8 @@ class AIAcceptanceService:
         self,
         db: Session,
         product_id: int,
-        decisions: dict[str, FieldReviewDecision]
+        decisions: dict[str, FieldReviewDecision],
+        background_tasks: Optional[Any] = None
     ) -> AIAcceptanceResponse:
         """Applies granular field-level seller review decisions to the active generation.
 
@@ -342,17 +374,37 @@ class AIAcceptanceService:
                 # Leave unreviewed
                 acc_state[field] = "pending"
 
+        # Check if any semantic field was accepted or modified
+        has_semantic_accept_or_modify = any(
+            dec.action in (FieldReviewAction.ACCEPT, FieldReviewAction.MODIFY)
+            for dec in decisions.values()
+        )
+
         # Atomic Transaction: persist Product and AIGeneration updates together
         try:
             self.product_repository.update(db, product, commit=False)
             generation.acceptance_state = acc_state
             self.ai_generation_repository.update(db, generation, commit=False)
+            if has_semantic_accept_or_modify and self.embedding_service:
+                self.embedding_service.invalidate_embedding(db, product.id, commit=False)
             db.commit()
             db.refresh(product)
             db.refresh(generation)
         except Exception:
             db.rollback()
             raise
+
+        if has_semantic_accept_or_modify and self.embedding_service and background_tasks is not None:
+            try:
+                from app.services.embedding_service import run_async_product_embedding
+                _, expected_hash = self.embedding_service.build_embedding_document(db, product)
+                background_tasks.add_task(
+                    run_async_product_embedding,
+                    product.id,
+                    expected_hash
+                )
+            except Exception:
+                pass
 
         return AIAcceptanceResponse(
             product_id=product.id,

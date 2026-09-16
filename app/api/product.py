@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, status
 from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
@@ -22,22 +22,27 @@ router = APIRouter(
     tags=["Products"]
 )
 
+from app.services.embedding_service import EmbeddingService
+
 product_repository = ProductRepository()
 category_repository = CategoryRepository()
 ai_generation_repository = AIGenerationRepository()
 product_metadata_repository = ProductMetadataRepository()
+embedding_service = EmbeddingService()
 
 ai_acceptance_service = AIAcceptanceService(
     product_repository=product_repository,
     ai_generation_repository=ai_generation_repository,
     product_metadata_repository=product_metadata_repository,
     category_repository=category_repository,
+    embedding_service=embedding_service,
 )
 
 service = ProductService(
     product_repository=product_repository,
     category_repository=category_repository,
     ai_acceptance_service=ai_acceptance_service,
+    embedding_service=embedding_service,
 )
 
 @router.post(
@@ -109,12 +114,14 @@ def search_products(
 def update_product(
     product_id: int,
     update: ProductUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     return service.update(
         db,
         product_id,
-        update
+        update,
+        background_tasks=background_tasks
     )
 
 @router.delete(

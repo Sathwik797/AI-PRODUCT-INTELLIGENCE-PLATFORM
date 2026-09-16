@@ -153,6 +153,14 @@ Category (categories)
 - **Granular Field Review**: Allows field-by-field acceptance, custom seller modification, rejection, or deferred review.
 - **Seller Edit Synchronization**: If a seller manually updates a product field via standard catalog APIs, any active AI generation that previously supplied that field automatically transitions to `modified`.
 
+### 5. Product Embedding Subsystem & Local FAISS Projection
+- **Deterministic Text Serialization**: Dedicated `EmbeddingTextBuilder` serializes canonical product attributes and accepted AI metadata in a strict, deterministic section order with normalized whitespace and sorted collections.
+- **SHA-256 Invalidation Gate**: Computes SHA-256 digests of canonical documents. If content hash matches stored hash, regeneration is bypassed (`no-op`). Semantic edits mark state `STALE` and trigger async regeneration; non-semantic edits (price, inventory) do NOT trigger regeneration.
+- **Concurrency Protection**: Asynchronous background jobs re-read authoritative state and compare SHA-256 hashes to prevent stale jobs from overwriting newer representations.
+- **MySQL as System of Record & FAISS Projection**: MySQL is the authoritative system of record (`product_embeddings`). FAISS (`IndexIDMap2` + `IndexFlatIP`) is a rebuildable, disposable vector projection.
+- **Atomic Rebuild & Reconciliation**: Self-healing reconciliation restores missing vectors from MySQL, while atomic rebuilds write a new index and swap pointers without corrupting active index state.
+- **Explicit Backfill CLI**: `python -m app.commands.backfill_embeddings` allows operator-driven batch generation with fault isolation and change-detection skipping.
+
 ---
 
 ## 🛠️ Technology Stack
@@ -163,8 +171,10 @@ Category (categories)
 | **API Framework** | FastAPI | High-throughput async REST API with automatic OpenAPI validation. |
 | **Data Validation** | Pydantic V2 | High-speed C-based validation (`pydantic-core`) with discriminated unions. |
 | **Persistence / ORM** | SQLAlchemy 2.0 | Explicit transactions, unit-of-work pattern, declarative mapping. |
+| **Database Migrations** | Alembic 1.20+ | Version-controlled, reproducible relational schema migrations. |
 | **Database Engine** | MySQL 8.0+ / PyMySQL | Production enterprise RDBMS; SQLite static pool for in-memory unit tests. |
-| **AI Vision Model** | Google Gemini 2.5 Flash | Multimodal high-speed visual reasoning and structured JSON output. |
+| **Vector Engine** | FAISS (`faiss-cpu`) | In-memory dense vector indexing (`IndexIDMap2` + `IndexFlatIP`) with cosine normalization. |
+| **AI Models** | Google Gemini 2.5 Flash / `gemini-embedding-001` | Multimodal visual reasoning and 768-dimensional dense vector embeddings. |
 | **AI SDK** | `google-genai` (v2.22.0) | Official modern Google GenAI client library. |
 | **Image Processing** | Pillow (PIL) | Automated dimension extraction and image format verification. |
 | **Server Engine** | Uvicorn | Production-ready ASGI server implementation. |
@@ -345,12 +355,44 @@ DATABASE_URL="mysql+pymysql://username:password@localhost:3306/product_intellige
 GEMINI_API_KEY="your-google-gemini-api-key-here"
 ```
 
-### 4. Initialize Database & Run Server
+### 4. Database Migrations (Alembic)
+Schema management is handled explicitly through **Alembic migrations** (startup `create_all()` has been deprecated to ensure production-safe, auditable schema evolution).
+
+- **For existing populated databases**: Stamp the current Phase 01–05 baseline without re-running DDL:
+  ```bash
+  alembic stamp head
+  ```
+- **For fresh databases**: Run all migrations to establish the schema:
+  ```bash
+  alembic upgrade head
+  ```
+
+#### Common Alembic Commands
+```bash
+# Create a new versioned migration after model changes
+alembic revision --autogenerate -m "describe_changes"
+
+# Apply pending migrations
+alembic upgrade head
+
+# Roll back the most recent migration (test environments only)
+alembic downgrade -1
+
+# Show current migration revision
+alembic current
+
+# View full migration revision history
+alembic history
+```
+> [!NOTE]
+> All future schema modifications (including Phase 06 embedding tables) must be introduced exclusively through versioned Alembic revisions.
+
+### 5. Run Development Server
 ```bash
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-### 5. Access Interactive Documentation
+### 6. Access Interactive Documentation
 - **Swagger UI**: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
 - **ReDoc**: [http://127.0.0.1:8000/redoc](http://127.0.0.1:8000/redoc)
 
@@ -358,11 +400,16 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## 🧪 Test Coverage & Verification
 
-The platform maintains a comprehensive test suite of **81 automated tests** with 100% pass rates across all functional units:
+The platform maintains an extensive automated regression test suite with 100% pass rates across all functional units:
 
 ```bash
-# Run Step 7 AI Acceptance & Review Suite
-python scratch/test_ai_acceptance.py
+# Run Phase 06 Embedding & Vector Store Suites
+python scratch/test_embedding_text_builder.py
+python scratch/test_embedding_provider.py
+python scratch/test_vector_store_faiss.py
+python scratch/test_embedding_service.py
+python scratch/test_backfill_cli.py
+python scratch/test_embedding_migration.py
 
 # Run Complete Phase 05 Regression Test Suite
 python scratch/test_ai_metadata_schema.py
@@ -370,18 +417,25 @@ python scratch/test_gemini_provider.py
 python scratch/test_ai_context_builder.py
 python scratch/test_ai_generation_service.py
 python scratch/test_ai_generation_api.py
+python scratch/test_ai_acceptance.py
 ```
 
 ### Test Suite Summary
 | Suite | Target Layer | Tests | Status |
 |---|---|---|---|
+| `test_embedding_text_builder.py` | Deterministic ordering, collection normalization, L×W×H dimensions, SHA-256 | 4 | ✅ PASS |
+| `test_embedding_provider.py` | Abstract port, Google adapter, mock provider, 768-dim validation, error handling | 3 | ✅ PASS |
+| `test_vector_store_faiss.py` | IndexIDMap2, L2 normalization, atomic persistence, atomic rebuild & failure isolation | 3 | ✅ PASS |
+| `test_embedding_service.py` | Lifecycle transitions, skip unchanged (Q38), semantic vs price-only change (Q43), hash gate (Q44), reconciliation (Q41) | 5 | ✅ PASS |
+| `test_backfill_cli.py` | Explicit CLI, skip unchanged, item fault isolation, retry safety | 1 | ✅ PASS |
+| `test_embedding_migration.py` | Alembic upgrade to Phase 06, clean downgrade -1 to baseline | 1 | ✅ PASS |
 | `test_ai_metadata_schema.py` | Two-tier Pydantic contracts, evidence, recursive depth limit | 18 | ✅ PASS |
-| `test_gemini_provider.py` | Provider configuration, multimodal construction, error mapping | 7 | ✅ PASS |
-| `test_ai_context_builder.py` | Domain-to-DTO conversion, prompt rules, image ordering | 12 | ✅ PASS |
+| `test_gemini_provider.py` | Provider configuration, multimodal construction, error mapping | 26 | ✅ PASS |
+| `test_ai_context_builder.py` | Domain-to-DTO conversion, prompt rules, image ordering | 16 | ✅ PASS |
 | `test_ai_generation_service.py` | Monotonic numbering, lifecycle state machine, rollback safety | 18 | ✅ PASS |
 | `test_ai_generation_api.py` | Async BackgroundTasks, SessionLocal isolation, REST routes | 12 | ✅ PASS |
 | `test_ai_acceptance.py` | Accept-all, field-level review, seller edit sync, immutability | 14 | ✅ PASS |
-| **Total Automated Tests** | | **81** | **✅ 100% PASS** |
+| **Total Automated Tests** | | **121** | **✅ 100% PASS** |
 
 ---
 
@@ -399,7 +453,14 @@ python scratch/test_ai_generation_api.py
   - [x] Step 5: Atomic generation service with monotonic numbering and rollback safety.
   - [x] Step 6: Asynchronous execution API via FastAPI `BackgroundTasks`.
   - [x] Step 7: Human-in-the-loop review, field acceptance, and seller edit synchronization.
-- [ ] **Phase 06 — Embedding Generation**: Composite text formulation and vector embedding pipelines.
+- [x] **Phase 06 — Product Embeddings**:
+  - [x] Step 1: `ProductEmbedding` MySQL model and Alembic migration `70f0c7f28370`.
+  - [x] Step 2: Deterministic `EmbeddingTextBuilder` & SHA-256 content-hash invalidation.
+  - [x] Step 3: Decoupled `EmbeddingProvider` port & `GoogleGeminiEmbeddingProvider` (`gemini-embedding-001` at 768 dimensions).
+  - [x] Step 4: `VectorStore` port & `FAISSVectorStore` (`IndexIDMap2` + `IndexFlatIP`) with cosine normalization and atomic rebuild.
+  - [x] Step 5: `EmbeddingService` with lifecycle management (`PENDING`, `GENERATING`, `READY`, `STALE`, `FAILED`), content-hash concurrency gate, and reconciliation.
+  - [x] Step 6: Invalidation hooks on semantic catalog/AI review changes; price-only neutrality.
+  - [x] Step 7: Explicit batch backfill CLI (`python -m app.commands.backfill_embeddings`).
 - [ ] **Phase 07 — Semantic Search with FAISS**: In-memory dense vector indexing and similarity retrieval.
 - [ ] **Phase 08 — Retrieval-Augmented Generation (RAG)**: Context-grounded conversational product assistant.
 - [ ] **Phase 09 — Enterprise Deployment & Observability**: Docker containerization, CI/CD, and metrics.

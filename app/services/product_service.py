@@ -1,3 +1,4 @@
+from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.models.product import Product
@@ -6,6 +7,7 @@ from app.repositories.product_repository import ProductRepository
 from app.schemas.product import ProductCreate, ProductUpdate
 from app.services.ai_acceptance_service import AIAcceptanceService
 
+
 class ProductService:
 
     def __init__(
@@ -13,10 +15,12 @@ class ProductService:
         product_repository: ProductRepository,
         category_repository: CategoryRepository,
         ai_acceptance_service: AIAcceptanceService,
+        embedding_service: Optional[Any] = None,
     ):
         self.product_repository = product_repository
         self.category_repository = category_repository
         self.ai_acceptance_service = ai_acceptance_service
+        self.embedding_service = embedding_service
     
     def create(
         self,
@@ -102,7 +106,8 @@ class ProductService:
         self,
         db: Session,
         product_id: int,
-        product_update: ProductUpdate
+        product_update: ProductUpdate,
+        background_tasks: Optional[Any] = None
     ) -> Product:
 
         # Check if product exists
@@ -143,11 +148,34 @@ class ProductService:
             updated_fields=list(update_data.keys())
         )
 
+        # Invalidate embedding if semantic fields changed (Q43)
+        semantic_changed = any(
+            f in update_data
+            for f in ("title", "description", "brand", "category_id")
+        )
+        if semantic_changed and self.embedding_service:
+            self.embedding_service.invalidate_embedding(db, product.id, commit=False)
+
         # Save changes
-        return self.product_repository.update(
+        saved_product = self.product_repository.update(
             db,
             product
         )
+
+        # Enqueue async embedding generation if semantic fields changed
+        if semantic_changed and self.embedding_service and background_tasks is not None:
+            try:
+                from app.services.embedding_service import run_async_product_embedding
+                _, expected_hash = self.embedding_service.build_embedding_document(db, saved_product)
+                background_tasks.add_task(
+                    run_async_product_embedding,
+                    saved_product.id,
+                    expected_hash
+                )
+            except Exception:
+                pass
+
+        return saved_product
         
     def delete(
         self,

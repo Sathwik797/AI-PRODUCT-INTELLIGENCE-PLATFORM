@@ -1,0 +1,119 @@
+{
+  "run_id": "eval_20260916_063226_smoke_service_44fb71",
+  "timestamp": "2026-09-16T06:32:26.030023+00:00",
+  "benchmark_name": "smoke",
+  "benchmark_tier": "smoke",
+  "target": "service",
+  "system_configuration": {
+    "embedding_model": "mock-embedding-model",
+    "embedding_dimension": 768,
+    "text_builder_version": "v1",
+    "mysql_candidate_k": 100,
+    "faiss_candidate_k": 100,
+    "max_candidate_k": 300,
+    "default_limit": 20,
+    "enable_expansion": true,
+    "semantic_weight": 0.65,
+    "structured_weight": 0.35
+  },
+  "catalog_limitations": {
+    "active_product_count": 1,
+    "statistical_significance": "LOW",
+    "notice": "Catalog contains 1 active product(s); ranking and retrieval metrics have limited statistical significance."
+  },
+  "correctness_gate_passed": true,
+  "summary_metrics": {
+    "total_queries": 3,
+    "successful_queries": 3,
+    "failed_queries": 0,
+    "ndcg_at_10": 1.0,
+    "ndcg_at_20": 1.0,
+    "mrr": 1.0,
+    "candidate_recall_mysql": 1.0,
+    "candidate_recall_faiss": 0.0,
+    "candidate_recall_union": 1.0,
+    "hit_rate_at_10": 1.0,
+    "hard_filter_violation_rate": 0.0,
+    "total_hard_filter_violations": 0,
+    "k_expansion_rate": 0.0,
+    "latency_p50_ms": 15.93,
+    "latency_p95_ms": 17.46,
+    "latency_p99_ms": 17.6
+  },
+  "query_type_breakdown": {
+    "exact_attribute": {
+      "query_count": 3,
+      "mean_ndcg_at_10": 1.0,
+      "mean_ndcg_at_20": 1.0,
+      "mean_mrr": 1.0,
+      "mean_union_recall": 1.0,
+      "hard_filter_violations": 0,
+      "zero_result_accuracy": null
+    }
+  },
+  "query_results": [
+    {
+      "benchmark_id": "smoke_exact_001",
+      "query_text": "Nike shoes",
+      "track": "curated",
+      "query_type": "exact_attribute",
+      "returned_count": 1,
+      "recall_at_k": {
+        "mysql": 1.0,
+        "faiss": 0.0,
+        "union": 1.0
+      },
+      "hit_rate_at_10": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_20": 1.0,
+      "mrr": 1.0,
+      "hard_filter_violations": 0,
+      "zero_result_correct": null,
+      "k_expanded": false,
+      "latency_ms": 17.63,
+      "error": null
+    },
+    {
+      "benchmark_id": "smoke_exact_002",
+      "query_text": "Nike Air Force",
+      "track": "curated",
+      "query_type": "exact_attribute",
+      "returned_count": 1,
+      "recall_at_k": {
+        "mysql": 1.0,
+        "faiss": 0.0,
+        "union": 1.0
+      },
+      "hit_rate_at_10": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_20": 1.0,
+      "mrr": 1.0,
+      "hard_filter_violations": 0,
+      "zero_result_correct": null,
+      "k_expanded": false,
+      "latency_ms": 15.93,
+      "error": null
+    },
+    {
+      "benchmark_id": "smoke_exact_003",
+      "query_text": "Nike Air Force 1 '72",
+      "track": "curated",
+      "query_type": "exact_attribute",
+      "returned_count": 1,
+      "recall_at_k": {
+        "mysql": 1.0,
+        "faiss": 0.0,
+        "union": 1.0
+      },
+      "hit_rate_at_10": 1.0,
+      "ndcg_at_10": 1.0,
+      "ndcg_at_20": 1.0,
+      "mrr": 1.0,
+      "hard_filter_violations": 0,
+      "zero_result_correct": null,
+      "k_expanded": false,
+      "latency_ms": 14.16,
+      "error": null
+    }
+  ]
+}

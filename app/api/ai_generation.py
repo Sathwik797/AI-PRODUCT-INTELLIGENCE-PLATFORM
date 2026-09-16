@@ -51,11 +51,16 @@ ai_generation_service = AIGenerationService(
     product_metadata_repository=product_metadata_repository,
 )
 
+from app.services.embedding_service import EmbeddingService
+
+embedding_service = EmbeddingService()
+
 ai_acceptance_service = AIAcceptanceService(
     product_repository=product_repository,
     ai_generation_repository=ai_generation_repository,
     product_metadata_repository=product_metadata_repository,
     category_repository=category_repository,
+    embedding_service=embedding_service,
 )
 
 
@@ -192,11 +197,12 @@ def get_current_ai_generation(
 )
 def accept_all_ai_metadata(
     product_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """Accepts all valid AI-generated fields for the current active generation in one click."""
     try:
-        return ai_acceptance_service.accept_all(db, product_id)
+        return ai_acceptance_service.accept_all(db, product_id, background_tasks=background_tasks)
     except (AcceptanceProductNotFoundError, NoActiveGenerationError) as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -222,6 +228,7 @@ def accept_all_ai_metadata(
 def review_ai_metadata(
     product_id: int,
     payload: AIAcceptSelectedRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """Applies granular field-level seller review decisions to the current active generation."""
@@ -229,7 +236,8 @@ def review_ai_metadata(
         return ai_acceptance_service.review_selected(
             db=db,
             product_id=product_id,
-            decisions=payload.decisions
+            decisions=payload.decisions,
+            background_tasks=background_tasks
         )
     except (AcceptanceProductNotFoundError, NoActiveGenerationError) as e:
         raise HTTPException(

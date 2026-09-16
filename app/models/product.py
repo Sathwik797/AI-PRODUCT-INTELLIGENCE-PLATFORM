@@ -74,4 +74,11 @@ class Product(Base):
         "AIGeneration",
         back_populates="product",
         cascade="all, delete-orphan"
+    )
+
+    embedding = relationship(
+        "ProductEmbedding",
+        back_populates="product",
+        uselist=False,
+        cascade="all, delete-orphan"
     )

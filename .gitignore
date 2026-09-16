@@ -37,3 +37,7 @@ dist/
 
 # Ignore uploads test files
 uploads/
+
+# Vector Store / FAISS indexes
+data/faiss/
+*.bin
