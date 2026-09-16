@@ -26,7 +26,7 @@ def get_search_service() -> HybridSearchService:
 
 @router.get("", response_model=SearchResponse)
 def search_products(
-    q: str = Query(..., min_length=1, description="E-commerce natural language search query."),
+    q: str = Query(..., min_length=1, max_length=500, description="E-commerce natural language search query."),
     limit: Optional[int] = Query(20, ge=1, le=100, description="Maximum number of search results to return."),
     debug: bool = Query(False, description="Whether to include internal diagnostic metadata in response."),
     db: Session = Depends(get_db),

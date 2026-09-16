@@ -6,8 +6,12 @@ using the verified 'gemini-embedding-001' model at 768 dimensions.
 """
 
 from abc import ABC, abstractmethod
+import logging
 import os
+import time
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 # ==============================================================================
@@ -87,36 +91,47 @@ class GoogleGeminiEmbeddingProvider(EmbeddingProvider):
         return self._client
 
     def embed_text(self, text: str) -> list[float]:
-        """Calls Google GenAI embed_content API and returns a 768-dimensional float list."""
+        """Calls Google GenAI embed_content API and returns a 768-dimensional float list.
+        
+        Applies a single-owner bounded retry policy (max 2 attempts) for transient failures.
+        """
         if not text or not text.strip():
             raise EmbeddingGenerationError("Cannot generate embedding for empty or whitespace text.")
 
         client = self._get_client()
-        try:
-            from google.genai import types
-            config = types.EmbedContentConfig(
-                output_dimensionality=self.dimension
-            )
-            response = client.models.embed_content(
-                model=self.model_name,
-                contents=text,
-                config=config
-            )
-
-            if not response.embeddings or not response.embeddings[0].values:
-                raise EmbeddingGenerationError("Gemini API returned an empty embedding vector.")
-
-            vector = list(response.embeddings[0].values)
-            if len(vector) != self.dimension:
-                raise EmbeddingGenerationError(
-                    f"Expected vector of dimension {self.dimension}, but got {len(vector)}."
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                from google.genai import types
+                config = types.EmbedContentConfig(
+                    output_dimensionality=self.dimension
                 )
-            return vector
+                response = client.models.embed_content(
+                    model=self.model_name,
+                    contents=text,
+                    config=config
+                )
 
-        except EmbeddingProviderError:
-            raise
-        except Exception as e:
-            raise EmbeddingGenerationError(f"Gemini embedding API call failed: {e}") from e
+                if not response.embeddings or not response.embeddings[0].values:
+                    raise EmbeddingGenerationError("Gemini API returned an empty embedding vector.")
+
+                vector = list(response.embeddings[0].values)
+                if len(vector) != self.dimension:
+                    raise EmbeddingGenerationError(
+                        f"Expected vector of dimension {self.dimension}, but got {len(vector)}."
+                    )
+                return vector
+
+            except EmbeddingProviderError:
+                raise
+            except Exception as e:
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"Gemini embedding transient failure on attempt {attempt}/{max_attempts}: {e}. Retrying in 0.5s..."
+                    )
+                    time.sleep(0.5)
+                else:
+                    raise EmbeddingGenerationError(f"Gemini embedding API call failed after {max_attempts} attempts: {e}") from e
 
     def get_dimension(self) -> int:
         return self.dimension

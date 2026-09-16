@@ -99,7 +99,13 @@ class HybridSearchService:
             fut_sql = executor.submit(_fetch_mysql)
             fut_faiss = executor.submit(_fetch_faiss)
             mysql_candidates = fut_sql.result()
-            faiss_candidates, cached_query_vector = fut_faiss.result()
+            try:
+                faiss_candidates, cached_query_vector = fut_faiss.result()
+            except Exception as e:
+                logger.warning(
+                    f"Semantic FAISS candidate retrieval failed ({e}); gracefully degrading to structured MySQL search."
+                )
+                faiss_candidates, cached_query_vector = [], []
 
         # 3. Candidate Union & Provenance Tracking (Q57)
         candidate_provenance: dict[int, set[str]] = {}

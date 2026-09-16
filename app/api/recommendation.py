@@ -7,7 +7,7 @@ Implements Q93:
 """
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
@@ -31,7 +31,7 @@ def get_recommendation_service() -> RecommendationService:
 
 @router.get("/{product_id}/recommendations", response_model=RecommendationResponse)
 def get_product_recommendations(
-    product_id: int,
+    product_id: int = Path(..., ge=1, description="Source product ID to find recommendations for."),
     limit: Optional[int] = Query(5, ge=1, le=50, description="Number of recommendations to return."),
     db: Session = Depends(get_db),
     service: RecommendationService = Depends(get_recommendation_service)

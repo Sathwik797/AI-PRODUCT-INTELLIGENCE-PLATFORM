@@ -19,9 +19,13 @@ Architectural Boundaries:
 
 from dataclasses import dataclass, field
 import json
+import logging
 import os
 from pathlib import Path
+import time
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -269,15 +273,22 @@ class GeminiProvider:
     def __init__(
         self,
         config: Optional[GeminiConfig] = None,
-        client: Optional[Any] = None
+        client: Optional[Any] = None,
+        api_key: Optional[str] = None
     ):
         """Initializes the provider.
 
         Args:
             config: Optional GeminiConfig. If omitted, uses default settings and env vars.
             client: Optional injected Gemini client (useful for unit testing/mocking).
+            api_key: Optional API key override.
         """
-        self.config = config or GeminiConfig()
+        if config is None:
+            self.config = GeminiConfig(api_key=api_key)
+        else:
+            self.config = config
+            if api_key:
+                self.config.api_key = api_key
         self._client = client
 
     def _get_client(self) -> Any:
@@ -496,78 +507,91 @@ class GeminiProvider:
         return self._parse_and_validate_response(raw_response)
 
     def _execute_generate_content(self, client: Any, request_payload: dict[str, Any]) -> Any:
-        """Executes content generation via the modern Google GenAI SDK or injected mock client."""
-        try:
-            # 1. Real Google GenAI SDK client path: client.models.generate_content(...)
-            if hasattr(client, "models") and hasattr(client.models, "generate_content") and not hasattr(client, "generate_content"):
-                try:
-                    from google.genai import types
-                    contents: list[Any] = [request_payload["user_text"]]
-                    for img in request_payload["images"]:
-                        contents.append(
-                            types.Part.from_bytes(data=img["bytes"], mime_type=img["mime_type"])
-                        )
+        """Executes content generation via the modern Google GenAI SDK or injected mock client.
 
+        Applies a single-owner bounded retry policy (max 2 attempts) for transient network/API failures.
+        Deterministic configuration and validation errors are never retried.
+        """
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                # 1. Real Google GenAI SDK client path: client.models.generate_content(...)
+                if hasattr(client, "models") and hasattr(client.models, "generate_content") and not hasattr(client, "generate_content"):
                     try:
-                        config = types.GenerateContentConfig(
-                            system_instruction=request_payload["system_instruction"],
-                            temperature=self.config.temperature,
-                            max_output_tokens=self.config.max_output_tokens,
-                            response_mime_type="application/json",
-                            response_schema=GeminiProductMetadataWire,
-                        )
-                        return client.models.generate_content(
-                            model=self.config.model_name,
-                            contents=contents,
-                            config=config,
-                        )
-                    except ValueError as ve:
-                        # Defensive fallback only if SDK/API cannot serialize schema
-                        if "schema" in str(ve).lower() or "additionalproperties" in str(ve).lower():
-                            fallback_config = types.GenerateContentConfig(
+                        from google.genai import types
+                        contents: list[Any] = [request_payload["user_text"]]
+                        for img in request_payload["images"]:
+                            contents.append(
+                                types.Part.from_bytes(data=img["bytes"], mime_type=img["mime_type"])
+                            )
+
+                        try:
+                            config = types.GenerateContentConfig(
                                 system_instruction=request_payload["system_instruction"],
                                 temperature=self.config.temperature,
                                 max_output_tokens=self.config.max_output_tokens,
                                 response_mime_type="application/json",
+                                response_schema=GeminiProductMetadataWire,
                             )
                             return client.models.generate_content(
                                 model=self.config.model_name,
                                 contents=contents,
-                                config=fallback_config,
+                                config=config,
                             )
-                        raise
-                except ImportError:
-                    # Injected mock where models.generate_content is used without google-genai installed
-                    return client.models.generate_content(
+                        except ValueError as ve:
+                            # Defensive fallback only if SDK/API cannot serialize schema
+                            if "schema" in str(ve).lower() or "additionalproperties" in str(ve).lower():
+                                fallback_config = types.GenerateContentConfig(
+                                    system_instruction=request_payload["system_instruction"],
+                                    temperature=self.config.temperature,
+                                    max_output_tokens=self.config.max_output_tokens,
+                                    response_mime_type="application/json",
+                                )
+                                return client.models.generate_content(
+                                    model=self.config.model_name,
+                                    contents=contents,
+                                    config=fallback_config,
+                                )
+                            raise
+                    except ImportError:
+                        # Injected mock where models.generate_content is used without google-genai installed
+                        return client.models.generate_content(
+                            model=self.config.model_name,
+                            contents=[request_payload["user_text"]],
+                            config=request_payload,
+                        )
+
+                # 2. Injected mock/test client with direct generate_content(...)
+                elif hasattr(client, "generate_content"):
+                    return client.generate_content(
                         model=self.config.model_name,
-                        contents=[request_payload["user_text"]],
-                        config=request_payload,
+                        system_instruction=request_payload["system_instruction"],
+                        user_text=request_payload["user_text"],
+                        images=request_payload["images"],
+                        response_schema=GeminiProductMetadataWire,
                     )
 
-            # 2. Injected mock/test client with direct generate_content(...)
-            elif hasattr(client, "generate_content"):
-                return client.generate_content(
-                    model=self.config.model_name,
-                    system_instruction=request_payload["system_instruction"],
-                    user_text=request_payload["user_text"],
-                    images=request_payload["images"],
-                    response_schema=GeminiProductMetadataWire,
-                )
+                # 3. Direct callable mock
+                elif callable(client):
+                    return client(request_payload)
 
-            # 3. Direct callable mock
-            elif callable(client):
-                return client(request_payload)
+                else:
+                    raise GeminiConfigurationError(
+                        f"Unsupported Gemini client object: {type(client)}. Client must support "
+                        "'models.generate_content' (modern google-genai SDK) or 'generate_content' (mock)."
+                    )
 
-            else:
-                raise GeminiConfigurationError(
-                    f"Unsupported Gemini client object: {type(client)}. Client must support "
-                    "'models.generate_content' (modern google-genai SDK) or 'generate_content' (mock)."
-                )
-
-        except (GeminiConfigurationError, GeminiResponseValidationError):
-            raise
-        except Exception as e:
-            raise GeminiAPIError(f"Gemini API generation call failed: {e}") from e
+            except (GeminiConfigurationError, GeminiResponseValidationError):
+                # Deterministic errors: do not retry
+                raise
+            except Exception as e:
+                if attempt < max_attempts:
+                    logger.warning(
+                        f"Gemini API generation transient failure on attempt {attempt}/{max_attempts}: {e}. Retrying in 0.5s..."
+                    )
+                    time.sleep(0.5)
+                else:
+                    raise GeminiAPIError(f"Gemini API generation call failed after {max_attempts} attempts: {e}") from e
 
     @staticmethod
     def _evidence_wire_to_dict(ev: EvidenceWire) -> dict[str, Any]:

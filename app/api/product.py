@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from app.db.dependencies import get_db
@@ -64,16 +64,19 @@ def create_product(
     response_model=list[ProductResponse]
 )
 def get_all_products(
+    skip: int = Query(0, ge=0, description="Number of products to skip."),
+    limit: int = Query(50, ge=1, le=100, description="Max products to return."),
     db: Session = Depends(get_db)
 ):
-    return service.get_all(db)
+    products = service.get_all(db)
+    return products[skip:skip + limit]
 
 @router.get(
     "/{product_id}",
     response_model=ProductResponse
 )
 def get_product_by_id(
-    product_id: int,
+    product_id: int = Path(..., ge=1, description="Product ID"),
     db: Session = Depends(get_db)
 ):
     return service.get_by_id(
@@ -86,7 +89,7 @@ def get_product_by_id(
     response_model=list[ProductResponse]
 )
 def get_products_by_category(
-    category_id: int,
+    category_id: int = Path(..., ge=1, description="Category ID"),
     db: Session = Depends(get_db)
 ):
     return service.get_by_category(
@@ -99,7 +102,7 @@ def get_products_by_category(
     response_model=list[ProductResponse]
 )
 def search_products(
-    keyword: str,
+    keyword: str = Path(..., min_length=1, max_length=100, description="Search keyword"),
     db: Session = Depends(get_db)
 ):
     return service.search(
