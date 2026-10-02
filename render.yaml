@@ -17,6 +17,8 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: PYTHONPATH
+        value: "."
       - key: APP_NAME
         value: "AI Product Intelligence Platform"
       - key: APP_VERSION

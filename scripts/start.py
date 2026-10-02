@@ -4,6 +4,13 @@ import subprocess
 import sys
 
 
+# Ensure project root is in sys.path and PYTHONPATH
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
+os.environ["PYTHONPATH"] = f"{ROOT_DIR}:{os.environ.get('PYTHONPATH', '')}"
+
+
 def main():
     port = int(os.environ.get("PORT", "8000"))
     print(f"[STARTUP] Initializing application on port {port}...")
