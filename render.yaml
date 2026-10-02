@@ -38,7 +38,6 @@ services:
   - type: web
     name: ai-product-frontend
     runtime: static
-    plan: free
     buildCommand: "cd frontend && npm install && npm run build"
     staticPublishPath: "./frontend/dist"
     autoDeploy: true
