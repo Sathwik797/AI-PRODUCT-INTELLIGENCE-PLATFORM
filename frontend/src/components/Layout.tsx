@@ -21,28 +21,26 @@ export const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const isOpsMode = location.pathname.startsWith('/ops');
 
-  // Header scroll hide/show behavior (Section 3)
+  // Header scroll hide/show behavior
   const [isHeaderVisible, setIsHeaderVisible] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
 
   useEffect(() => {
+    let lastY = window.scrollY;
     const handleScroll = () => {
       const currentScrollY = window.scrollY;
       if (currentScrollY <= 15) {
         setIsHeaderVisible(true);
-      } else if (currentScrollY > lastScrollY && currentScrollY > 60) {
-        // Scrolling downward
+      } else if (currentScrollY > lastY && currentScrollY > 60) {
         setIsHeaderVisible(false);
-      } else if (currentScrollY < lastScrollY) {
-        // Scrolling upward
+      } else if (currentScrollY < lastY) {
         setIsHeaderVisible(true);
       }
-      setLastScrollY(currentScrollY);
+      lastY = currentScrollY;
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
-  }, [lastScrollY]);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;

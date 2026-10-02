@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   Search,
@@ -102,7 +102,9 @@ export const StorefrontSearchPage: React.FC = () => {
       if (!trimmed) {
         setSearchData(null);
         setActiveQuery('');
-        setSearchParams({});
+        if (searchParams.has('q')) {
+          setSearchParams({}, { replace: true });
+        }
         return;
       }
 
@@ -112,18 +114,24 @@ export const StorefrontSearchPage: React.FC = () => {
         const res = await executeHybridSearch(trimmed, 24, false);
         setSearchData(res);
         setActiveQuery(trimmed);
-        setSearchParams({ q: trimmed });
+        if (searchParams.get('q') !== trimmed) {
+          setSearchParams({ q: trimmed }, { replace: true });
+        }
       } catch (err: unknown) {
         setError(getErrorMessage(err));
       } finally {
         setLoading(false);
       }
     },
-    [setSearchParams]
+    [searchParams, setSearchParams]
   );
 
-  // Initial search if query param is set
+  // Initial search if query param changes
+  const prevQueryRef = useRef<string | null>(null);
   useEffect(() => {
+    if (prevQueryRef.current === queryParam) return;
+    prevQueryRef.current = queryParam;
+
     if (queryParam.trim()) {
       performSearch(queryParam.trim());
     } else {
@@ -232,11 +240,13 @@ export const StorefrontSearchPage: React.FC = () => {
     });
   }, [rawDisplayItems, selectedCategoryChip, categories]);
 
-  // Fetch product images for displayed items
+  // Fetch product images for displayed items without infinite loop
+  const requestedImagesRef = useRef<Set<number>>(new Set());
   useEffect(() => {
     displayedItems.forEach((item) => {
       const pid = item.product.id;
-      if (!productImages[pid]) {
+      if (!requestedImagesRef.current.has(pid)) {
+        requestedImagesRef.current.add(pid);
         getProductImages(pid)
           .then((imgs) => {
             if (imgs && imgs.length > 0) {
@@ -249,7 +259,7 @@ export const StorefrontSearchPage: React.FC = () => {
           .catch(() => {});
       }
     });
-  }, [displayedItems, productImages]);
+  }, [displayedItems]);
 
   // Contextual ProductIQ Understood summary
   const understoodSummary = useMemo(() => {
