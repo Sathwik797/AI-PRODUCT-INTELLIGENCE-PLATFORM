@@ -1,7 +1,14 @@
 import axios, { AxiosError } from 'axios';
 
-const rawBase = import.meta.env.VITE_API_URL || '';
-export const API_BASE_URL = typeof rawBase === 'string' ? rawBase.replace(/\/+$/, '') : '';
+function normalizeApiBaseUrl(raw: unknown): string {
+  if (!raw || typeof raw !== 'string') return '';
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  return withProtocol.replace(/\/+$/, '');
+}
+
+export const API_BASE_URL = normalizeApiBaseUrl(import.meta.env.VITE_API_URL);
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL ? API_BASE_URL : '/api',

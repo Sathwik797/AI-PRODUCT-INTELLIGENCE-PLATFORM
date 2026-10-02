@@ -84,11 +84,17 @@ export const StorefrontSearchPage: React.FC = () => {
     Promise.all([getCategories(), getProducts()])
       .then(([cats, prods]) => {
         if (isMounted) {
-          setCategories(cats);
-          setAllProducts(prods);
+          setCategories(Array.isArray(cats) ? cats : []);
+          setAllProducts(Array.isArray(prods) ? prods : []);
         }
       })
-      .catch((err) => console.error('Failed to load catalog data:', err));
+      .catch((err) => {
+        console.error('Failed to load catalog data:', err);
+        if (isMounted) {
+          setCategories([]);
+          setAllProducts([]);
+        }
+      });
 
     return () => {
       isMounted = false;
