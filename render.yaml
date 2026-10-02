@@ -23,14 +23,12 @@ services:
         value: "1.0.0"
       - key: DEBUG
         value: "false"
-      - key: DATABASE_URL
-        sync: false # Set your remote MySQL URL (e.g. mysql+pymysql://user:pass@host:3306/db)
       - key: GEMINI_API_KEY
-        sync: false # Set your Google Gemini API key
+        sync: false # Set your Google Gemini API key in Render dashboard (optional for demo search)
       - key: GEMINI_MODEL
         value: "gemini-1.5-flash"
       - key: CORS_ORIGINS
-        value: "*" # Or restrict to your frontend Render domain once deployed
+        value: "*"
 
   # ---------------------------------------------------------
   # 2. React Vite Frontend Static Site
