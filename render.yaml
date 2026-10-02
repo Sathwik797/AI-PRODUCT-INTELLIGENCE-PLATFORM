@@ -23,8 +23,10 @@ services:
         value: "1.0.0"
       - key: DEBUG
         value: "false"
+      - key: DATABASE_URL
+        sync: false # Paste your TiDB connection string here
       - key: GEMINI_API_KEY
-        sync: false # Set your Google Gemini API key in Render dashboard (optional for demo search)
+        sync: false # Set your Google Gemini API key in Render dashboard
       - key: GEMINI_MODEL
         value: "gemini-1.5-flash"
       - key: CORS_ORIGINS
@@ -37,7 +39,6 @@ services:
     name: ai-product-frontend
     runtime: static
     plan: free
-    region: oregon
     buildCommand: "cd frontend && npm install && npm run build"
     staticPublishPath: "./frontend/dist"
     autoDeploy: true
