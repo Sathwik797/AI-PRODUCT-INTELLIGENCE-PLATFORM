@@ -22,13 +22,15 @@ class Settings(BaseSettings):
     db_pool_recycle: int = 1800
     db_pool_timeout: int = 30
 
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+    cors_origins: str | list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
-    @field_validator("cors_origins", mode="before")
+    @field_validator("cors_origins", mode="after")
     @classmethod
     def assemble_cors_origins(cls, v):
         if isinstance(v, str):
             v_trimmed = v.strip()
+            if v_trimmed == "*":
+                return ["*"]
             if v_trimmed.startswith("[") and v_trimmed.endswith("]"):
                 try:
                     return json.loads(v_trimmed)
