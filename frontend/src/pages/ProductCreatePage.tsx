@@ -118,7 +118,7 @@ export const ProductCreatePage: React.FC = () => {
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-              Price ($ USD) <span className="text-rose-500">*</span>
+              Price (₹ INR) <span className="text-rose-500">*</span>
             </label>
             <input
               type="number"

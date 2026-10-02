@@ -4,6 +4,7 @@ import { Plus, Search, Trash2, Eye, Package, Loader2, AlertCircle } from 'lucide
 import type { Product } from '../types/product';
 import { getProducts, searchProducts, deleteProduct } from '../api/productApi';
 import { getErrorMessage } from '../api/client';
+import { formatINR } from '../utils/currency';
 
 export const ProductsPage: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
@@ -133,7 +134,7 @@ export const ProductsPage: React.FC = () => {
       )}
 
       {/* Product Table */}
-      <div className="bg-white rounded-lg border border-slate-200 shadow-2xs overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
         {loading ? (
           <div className="py-16 text-center">
             <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto mb-2" />
@@ -187,7 +188,7 @@ export const ProductsPage: React.FC = () => {
                     </td>
                     <td className="px-6 py-4 font-mono text-xs">{prod.sku}</td>
                     <td className="px-6 py-4 text-xs text-slate-700">{prod.brand || '—'}</td>
-                    <td className="px-6 py-4 font-mono text-xs text-slate-900">${prod.price.toFixed(2)}</td>
+                    <td className="px-6 py-4 font-mono text-xs text-slate-900">{formatINR(prod.price)}</td>
                     <td className="px-6 py-4">
                       <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-xs font-mono">
                         Cat #{prod.category_id}

@@ -91,6 +91,10 @@ app.include_router(rag_router)
 app.include_router(recommendation_router)
 
 # 5. Static Files Mounting
+import os
+os.makedirs("uploads", exist_ok=True)
+os.makedirs("data/faiss", exist_ok=True)
+
 app.mount(
     "/uploads",
     StaticFiles(directory="uploads"),

@@ -17,6 +17,7 @@ import { getErrorMessage } from '../api/client';
 import { CategorySelector } from '../components/CategorySelector';
 import { ImageGallery } from '../components/ImageGallery';
 import { AIStudio } from '../components/AIStudio';
+import { formatINR } from '../utils/currency';
 
 export const ProductDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -211,7 +212,7 @@ export const ProductDetailPage: React.FC = () => {
                     />
                   </div>
                   <div>
-                    <label className="block font-medium text-slate-600 mb-1">Price ($)</label>
+                    <label className="block font-medium text-slate-600 mb-1">Price (₹)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -281,7 +282,7 @@ export const ProductDetailPage: React.FC = () => {
                 <div className="grid grid-cols-2 gap-3 pt-2 border-t border-slate-100">
                   <div>
                     <span className="text-slate-400 block mb-0.5">Price</span>
-                    <span className="font-mono font-semibold text-slate-900">${product.price.toFixed(2)}</span>
+                    <span className="font-mono font-semibold text-slate-900">{formatINR(product.price)}</span>
                   </div>
                   <div>
                     <span className="text-slate-400 block mb-0.5">Category ID</span>

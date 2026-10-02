@@ -3,6 +3,7 @@ import type { ProductImage, ImageDisplayOrderUpdate } from '../types/image';
 
 export function normalizeImageUrl(imageUrl: string | null | undefined): string {
   if (!imageUrl) return '';
+  if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) return imageUrl;
   const normalized = imageUrl.replace(/\\/g, '/');
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
 }
