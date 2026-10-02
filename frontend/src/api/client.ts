@@ -1,11 +1,19 @@
 import axios, { AxiosError } from 'axios';
 
+const rawBase = import.meta.env.VITE_API_URL || '';
+export const API_BASE_URL = typeof rawBase === 'string' ? rawBase.replace(/\/+$/, '') : '';
+
 export const apiClient = axios.create({
-  baseURL: '/api',
+  baseURL: API_BASE_URL ? API_BASE_URL : '/api',
   headers: {
     'Content-Type': 'application/json',
   },
 });
+
+export function getFullApiUrl(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return API_BASE_URL ? `${API_BASE_URL}${cleanPath}` : cleanPath;
+}
 
 export function getErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
