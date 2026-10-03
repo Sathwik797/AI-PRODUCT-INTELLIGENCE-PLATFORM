@@ -2,8 +2,11 @@ import axios, { AxiosError } from 'axios';
 
 function normalizeApiBaseUrl(raw: unknown): string {
   if (!raw || typeof raw !== 'string') return '';
-  const trimmed = raw.trim();
+  let trimmed = raw.trim();
   if (!trimmed) return '';
+  if (!trimmed.includes('.')) {
+    trimmed = `${trimmed}.onrender.com`;
+  }
   const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   return withProtocol.replace(/\/+$/, '');
 }

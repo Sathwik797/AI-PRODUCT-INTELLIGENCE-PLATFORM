@@ -49,7 +49,4 @@ services:
         destination: "/index.html"
     envVars:
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: ai-product-backend
-          property: host
+        value: "https://ai-product-backend-lbam.onrender.com"
