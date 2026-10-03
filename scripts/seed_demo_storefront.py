@@ -188,7 +188,7 @@ def seed_demo_storefront():
             downloaded = download_image_safe(pdata["image_url"], img_dest)
 
             local_url = f"uploads/products/{product.id}/product.jpg"
-            chosen_url = local_url if downloaded else pdata["image_url"]
+            chosen_url = pdata["image_url"]
 
             existing_img = db.query(Image).filter_by(product_id=product.id).first()
             file_size = os.path.getsize(img_dest) if os.path.exists(img_dest) else 25000
